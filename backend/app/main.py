@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.api import health, catalog, leads, conversations
+from app.api import health, catalog, leads, conversations, auth, dashboard
 from app.api.webhooks import whatsapp
 
 
@@ -40,3 +40,5 @@ app.include_router(whatsapp.router, prefix="/webhooks", tags=["webhooks"])
 app.include_router(catalog.router, prefix="/api/catalog", tags=["catalog"])
 app.include_router(leads.router, prefix="/api/leads", tags=["leads"])
 app.include_router(conversations.router, prefix="/api/conversations", tags=["conversations"])
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])

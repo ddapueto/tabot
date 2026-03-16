@@ -12,6 +12,7 @@ from app.models.conversation import Conversation
 from app.models.lead import Lead
 from app.models.message import Message
 from app.services.ai_agent import generate_response
+from app.services.lead_scorer import extract_signals_from_message, update_score
 from app.services.whatsapp_client import send_text_message
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,13 @@ async def handle_inbound_message(
     # Update lead last_message_at
     lead.last_message_at = datetime.now(timezone.utc)
     await db.flush()
+
+    # 4b. Score the lead based on message content
+    if content:
+        signals = extract_signals_from_message(content)
+        if signals:
+            scoring_rules = company.scoring_rules if hasattr(company, "scoring_rules") else None
+            await update_score(db, lead, signals, scoring_rules)
 
     # 5. Generate AI response if enabled
     if not conversation.ai_enabled:
