@@ -1,18 +1,98 @@
 @import 'tailwindcss';
 
 @theme {
-	--color-primary: #00BFA5;
-	--color-primary-light: #1DE9B6;
-	--color-primary-dark: #00897B;
-	--color-accent: #FFB300;
-	--color-surface: #0f172a;
-	--color-surface-light: #1e293b;
-	--color-surface-lighter: #334155;
-	--font-family-sans: 'Inter', system-ui, sans-serif;
+	/* Backgrounds */
+	--color-base: #0a0a0f;
+	--color-surface: #12121a;
+	--color-elevated: #1a1a2e;
+	--color-overlay: rgba(0, 0, 0, 0.60);
+
+	/* Accent */
+	--color-accent: #00d4aa;
+	--color-accent-hover: #00e6b8;
+	--color-accent-muted: rgba(0, 212, 170, 0.15);
+
+	/* Font */
+	--font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	--font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
+/* Base body */
 body {
-	font-family: var(--font-family-sans);
-	background-color: var(--color-surface);
-	color: #e2e8f0;
+	font-family: var(--font-sans);
+	background-color: var(--color-base);
+	color: #f0f0f0;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+
+/* Animations */
+@keyframes shimmer {
+	0% { transform: translateX(-100%); }
+	100% { transform: translateX(100%); }
+}
+
+@keyframes fade-in {
+	from { opacity: 0; transform: translateY(4px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-right {
+	from { opacity: 0; transform: translateX(16px); }
+	to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes toast-in {
+	from { opacity: 0; transform: translateX(100%); }
+	to { opacity: 1; transform: translateX(0); }
+}
+
+.animate-fade-in { animation: fade-in 200ms ease-out; }
+.animate-slide-in { animation: slide-in-right 250ms ease-out; }
+
+/* Skeleton */
+.skeleton {
+	background: var(--color-elevated);
+	border-radius: 6px;
+	position: relative;
+	overflow: hidden;
+}
+.skeleton::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.04) 50%, transparent 100%);
+	animation: shimmer 1.5s infinite;
+}
+
+/* Glass */
+.glass {
+	background: rgba(18, 18, 26, 0.80);
+	backdrop-filter: blur(12px);
+	border: 1px solid rgba(255,255,255,0.08);
+}
+
+/* Chat bubbles */
+.bubble-sent {
+	background: rgba(0, 212, 170, 0.12);
+	border-radius: 18px 18px 4px 18px;
+}
+.bubble-received {
+	background: var(--color-elevated);
+	border-radius: 18px 18px 18px 4px;
+}
+.bubble-ai {
+	background: rgba(0, 150, 120, 0.15);
+	border-radius: 18px 18px 4px 18px;
+	border-left: 2px solid var(--color-accent);
+}
+.bubble-system {
+	background: rgba(255, 255, 255, 0.03);
+	border-radius: 12px;
 }

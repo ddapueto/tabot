@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
-	import { api, connectSSE, getCompanyId } from '$lib/api';
+	import { api, connectSSE } from '$lib/api';
+	import { formatTime, formatDate, formatRelative, initials, priorityConfig, channelConfig } from '$lib/utils';
 
 	let conversations = $state<any[]>([]);
 	let selectedConv = $state<any>(null);
@@ -11,36 +12,16 @@
 	let chatContainer = $state<HTMLDivElement>(null!);
 	let eventSource: EventSource | null = null;
 
-	const channelIcon: Record<string, string> = {
-		whatsapp: '💬',
-		instagram_dm: '📸',
-		instagram_comment: '💬',
-		web: '🌐',
-	};
-
-	const priorityDot: Record<string, string> = {
-		urgent: 'bg-red-400',
-		high: 'bg-orange-400',
-		medium: 'bg-yellow-400',
-		low: 'bg-gray-500',
-	};
-
 	onMount(async () => {
 		try {
 			conversations = await api.getConversations({ limit: 50 });
 		} finally {
 			loading = false;
 		}
-
-		// Connect SSE for real-time updates
 		eventSource = connectSSE((event) => {
 			if (event.type === 'new_message') {
-				// Update conversation list (move to top)
 				const idx = conversations.findIndex(c => c.id === event.conversation_id);
-				if (idx >= 0) {
-					conversations = [conversations[idx], ...conversations.slice(0, idx), ...conversations.slice(idx + 1)];
-				}
-				// Add message to current chat if it's the selected conversation
+				if (idx >= 0) conversations = [conversations[idx], ...conversations.slice(0, idx), ...conversations.slice(idx + 1)];
 				if (selectedConv && event.conversation_id === selectedConv.id) {
 					messages = [...messages, event.message];
 					scrollToBottom();
@@ -49,9 +30,7 @@
 		});
 	});
 
-	onDestroy(() => {
-		eventSource?.close();
-	});
+	onDestroy(() => eventSource?.close());
 
 	async function selectConversation(conv: any) {
 		selectedConv = conv;
@@ -65,238 +44,212 @@
 		const content = messageInput.trim();
 		messageInput = '';
 		sending = true;
-
-		// Optimistic update
-		const optimisticMsg = {
-			id: 'temp-' + Date.now(),
-			direction: 'outbound',
-			sender_type: 'human',
-			content,
-			created_at: new Date().toISOString(),
-			channel_status: 'sending',
-		};
-		messages = [...messages, optimisticMsg];
+		const temp = { id: 'temp-' + Date.now(), direction: 'outbound', sender_type: 'human', content, created_at: new Date().toISOString(), _sending: true };
+		messages = [...messages, temp];
 		await tick();
 		scrollToBottom();
-
 		try {
 			const result = await api.sendMessage(selectedConv.id, content);
-			// Replace optimistic with real
-			messages = messages.map(m => m.id === optimisticMsg.id ? { ...optimisticMsg, ...result, channel_status: 'sent' } : m);
+			messages = messages.map(m => m.id === temp.id ? { ...result, direction: 'outbound', sender_type: 'human' } : m);
 		} catch {
-			// Mark as failed
-			messages = messages.map(m => m.id === optimisticMsg.id ? { ...m, channel_status: 'failed' } : m);
+			messages = messages.map(m => m.id === temp.id ? { ...m, _failed: true, _sending: false } : m);
 		} finally {
 			sending = false;
 		}
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter' && !e.shiftKey) {
-			e.preventDefault();
-			sendMessage();
-		}
+		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 	}
 
 	function scrollToBottom() {
-		setTimeout(() => {
-			if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
-		}, 50);
-	}
-
-	function formatTime(iso: string) {
-		return new Date(iso).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit' });
-	}
-
-	function formatDate(iso: string) {
-		const d = new Date(iso);
-		const today = new Date();
-		if (d.toDateString() === today.toDateString()) return 'Hoy';
-		const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-		if (d.toDateString() === yesterday.toDateString()) return 'Ayer';
-		return d.toLocaleDateString('es-UY', { day: 'numeric', month: 'short' });
+		setTimeout(() => { if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight; }, 50);
 	}
 </script>
 
 <div class="flex h-full">
-	<!-- Column 1: Conversation list -->
-	<div class="w-80 border-r border-white/10 flex flex-col bg-surface">
-		<div class="p-4 border-b border-white/10">
-			<h2 class="text-lg font-semibold">Inbox</h2>
-			<p class="text-xs text-white/40 mt-0.5">{conversations.length} conversaciones</p>
+	<!-- Col 1: Conversation list -->
+	<div class="w-80 border-r border-white/[0.06] flex flex-col bg-surface shrink-0">
+		<div class="px-4 py-3 border-b border-white/[0.06]">
+			<h2 class="text-sm font-semibold text-zinc-300">Inbox</h2>
+			<p class="text-[11px] text-zinc-600">{conversations.length} conversaciones</p>
 		</div>
+
 		<div class="flex-1 overflow-auto">
-			{#each conversations as conv}
-				<button
-					onclick={() => selectConversation(conv)}
-					class="w-full text-left px-4 py-3 border-b border-white/5 hover:bg-white/5 transition-colors {selectedConv?.id === conv.id ? 'bg-white/10 border-l-2 border-l-primary' : ''}"
-				>
-					<div class="flex items-center gap-3">
-						<div class="relative">
-							<div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-sm font-bold">
-								{(conv.lead_name || '?')[0]}
-							</div>
-							<span class="absolute -bottom-0.5 -right-0.5 text-xs">{channelIcon[conv.channel] || '💬'}</span>
-						</div>
-						<div class="flex-1 min-w-0">
-							<div class="flex items-center justify-between">
-								<span class="text-sm font-medium truncate">{conv.lead_name || 'Sin nombre'}</span>
-								<span class="text-[10px] text-white/30">{formatDate(conv.updated_at)}</span>
-							</div>
-							<div class="flex items-center gap-1.5 mt-0.5">
-								<span class="w-2 h-2 rounded-full {priorityDot[conv.lead_priority] || 'bg-gray-500'}"></span>
-								<span class="text-xs text-white/40 truncate">
-									{conv.lead_phone || conv.lead_instagram || conv.channel}
-								</span>
-								{#if !conv.ai_enabled}
-									<span class="text-[10px] px-1 py-0.5 bg-orange-500/20 text-orange-400 rounded">Humano</span>
-								{/if}
-							</div>
-						</div>
-						<span class="text-xs font-mono text-primary/70">{conv.lead_score}</span>
-					</div>
-				</button>
-			{/each}
-			{#if conversations.length === 0 && !loading}
-				<div class="p-8 text-center">
-					<p class="text-4xl mb-2">💬</p>
-					<p class="text-sm text-white/40">No hay conversaciones</p>
-					<p class="text-xs text-white/30 mt-1">Los mensajes aparecerán cuando los clientes escriban</p>
+			{#if loading}
+				<div class="p-3 space-y-2">
+					{#each [1,2,3,4,5] as _}<div class="skeleton h-16 rounded-lg"></div>{/each}
 				</div>
+			{:else}
+				{#each conversations as conv}
+					{@const prio = priorityConfig[conv.lead_priority]}
+					{@const ch = channelConfig[conv.channel]}
+					<button
+						onclick={() => selectConversation(conv)}
+						class="w-full text-left px-4 py-3 border-b border-white/[0.03] transition-all duration-150 {selectedConv?.id === conv.id ? 'bg-accent/[0.06] border-l-2 border-l-accent' : 'hover:bg-white/[0.02]'}"
+					>
+						<div class="flex items-center gap-3">
+							<div class="relative shrink-0">
+								<div class="w-10 h-10 rounded-full bg-accent/15 flex items-center justify-center text-[11px] font-semibold text-accent">
+									{initials(conv.lead_name)}
+								</div>
+								<span class="absolute -bottom-0.5 -right-0.5 text-[10px]">{ch?.icon || '💬'}</span>
+							</div>
+							<div class="flex-1 min-w-0">
+								<div class="flex items-center justify-between">
+									<span class="text-sm font-medium text-zinc-200 truncate">{conv.lead_name || 'Sin nombre'}</span>
+									<span class="text-[10px] text-zinc-600 shrink-0">{formatRelative(conv.updated_at)}</span>
+								</div>
+								<div class="flex items-center gap-1.5 mt-0.5">
+									<span class="w-1.5 h-1.5 rounded-full {prio?.dot || 'bg-zinc-600'} shrink-0"></span>
+									<span class="text-[11px] text-zinc-500 truncate">{conv.lead_phone || conv.channel}</span>
+									{#if !conv.ai_enabled}
+										<span class="text-[9px] px-1 py-px bg-amber-500/15 text-amber-400 rounded shrink-0">manual</span>
+									{/if}
+								</div>
+							</div>
+							<span class="text-[11px] font-mono {prio?.text || 'text-zinc-600'} shrink-0">{conv.lead_score}</span>
+						</div>
+					</button>
+				{/each}
+				{#if conversations.length === 0}
+					<div class="p-8 text-center animate-fade-in">
+						<p class="text-3xl mb-2 opacity-30">💬</p>
+						<p class="text-sm text-zinc-500">Sin conversaciones</p>
+						<p class="text-[11px] text-zinc-600 mt-1">Esperando mensajes...</p>
+					</div>
+				{/if}
 			{/if}
 		</div>
 	</div>
 
-	<!-- Column 2: Chat area -->
+	<!-- Col 2: Chat -->
 	<div class="flex-1 flex flex-col min-w-0">
 		{#if selectedConv}
-			<!-- Chat header -->
-			<div class="px-4 py-3 border-b border-white/10 flex items-center justify-between bg-surface-light">
+			<!-- Header -->
+			<div class="px-5 py-3 border-b border-white/[0.06] flex items-center justify-between bg-surface">
 				<div class="flex items-center gap-3">
-					<div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center font-bold">
-						{(selectedConv.lead_name || '?')[0]}
+					<div class="w-9 h-9 rounded-full bg-accent/15 flex items-center justify-center text-[11px] font-semibold text-accent">
+						{initials(selectedConv.lead_name)}
 					</div>
 					<div>
-						<p class="font-medium">{selectedConv.lead_name || 'Sin nombre'}</p>
-						<p class="text-xs text-white/40">
-							{selectedConv.lead_phone || selectedConv.lead_instagram || ''} · {selectedConv.channel}
-						</p>
+						<p class="text-sm font-medium text-zinc-200">{selectedConv.lead_name || 'Sin nombre'}</p>
+						<p class="text-[11px] text-zinc-500">{selectedConv.lead_phone || ''} · {selectedConv.channel}</p>
 					</div>
 				</div>
-				<div class="flex items-center gap-2">
-					<span class="text-xs px-2 py-1 rounded-full {selectedConv.ai_enabled ? 'bg-primary/20 text-primary' : 'bg-orange-500/20 text-orange-400'}">
-						{selectedConv.ai_enabled ? '🤖 IA' : '👤 Humano'}
-					</span>
-				</div>
+				<span class="text-[10px] px-2 py-1 rounded-full {selectedConv.ai_enabled ? 'bg-accent/10 text-accent border border-accent/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}">
+					{selectedConv.ai_enabled ? '🤖 IA activa' : '👤 Manual'}
+				</span>
 			</div>
 
 			<!-- Messages -->
-			<div bind:this={chatContainer} class="flex-1 overflow-auto p-4 space-y-1" style="background: #0b141a;">
+			<div bind:this={chatContainer} class="flex-1 overflow-auto px-4 py-3 space-y-0.5" style="background: #0b0b12;">
 				{#each messages as msg, i}
 					{@const showDate = i === 0 || formatDate(msg.created_at) !== formatDate(messages[i-1]?.created_at)}
+					{@const sameAuthor = i > 0 && messages[i-1].sender_type === msg.sender_type && messages[i-1].direction === msg.direction}
+
 					{#if showDate}
-						<div class="flex justify-center py-2">
-							<span class="text-[11px] text-white/40 bg-white/5 px-3 py-1 rounded-full">{formatDate(msg.created_at)}</span>
+						<div class="flex justify-center py-3">
+							<span class="text-[10px] text-zinc-600 bg-white/[0.03] px-3 py-1 rounded-full">{formatDate(msg.created_at)}</span>
 						</div>
 					{/if}
-					<div class="flex {msg.direction === 'inbound' ? 'justify-start' : 'justify-end'}">
-						<div class="max-w-[65%] px-3 py-1.5 {msg.direction === 'inbound' ? 'bg-[#202c33] rounded-tr-lg rounded-br-lg rounded-bl-lg' : msg.sender_type === 'ai' ? 'bg-[#005c4b] rounded-tl-lg rounded-br-lg rounded-bl-lg' : 'bg-[#1b4a3e] rounded-tl-lg rounded-br-lg rounded-bl-lg'}">
-							{#if msg.sender_type === 'ai'}
-								<p class="text-[10px] text-primary/60 mb-0.5">🤖 IA</p>
-							{:else if msg.sender_type === 'human' && msg.direction === 'outbound'}
-								<p class="text-[10px] text-blue-400/60 mb-0.5">👤 Vendedor</p>
+
+					<div class="flex {msg.direction === 'inbound' ? 'justify-start' : 'justify-end'} {sameAuthor ? 'mt-0.5' : 'mt-2'}">
+						<div class="max-w-[65%] px-3.5 py-2 {msg.direction === 'inbound' ? 'bubble-received' : msg.sender_type === 'ai' ? 'bubble-ai' : 'bubble-sent'} {msg._sending ? 'opacity-60' : ''} {msg._failed ? 'border border-red-500/30' : ''}">
+							{#if msg.sender_type === 'ai' && !sameAuthor}
+								<p class="text-[10px] text-accent/50 font-medium mb-0.5">🤖 Tabot IA</p>
+							{:else if msg.sender_type === 'human' && msg.direction === 'outbound' && !sameAuthor}
+								<p class="text-[10px] text-blue-400/50 font-medium mb-0.5">👤 Vendedor</p>
 							{/if}
-							<p class="text-[14.2px] leading-[19px] text-[#e9edef] whitespace-pre-wrap">{msg.content || '(media)'}</p>
-							<div class="flex items-center justify-end gap-1 mt-0.5">
-								<span class="text-[11px] text-white/30">{formatTime(msg.created_at)}</span>
+							<p class="text-[13.5px] leading-[19px] text-zinc-200 whitespace-pre-wrap">{msg.content || '(media)'}</p>
+							<div class="flex items-center justify-end gap-1.5 mt-1 -mb-0.5">
+								<span class="text-[10px] text-zinc-600">{formatTime(msg.created_at)}</span>
 								{#if msg.direction === 'outbound'}
-									{#if msg.channel_status === 'sending'}
-										<span class="text-[11px] text-white/20">⏳</span>
-									{:else if msg.channel_status === 'failed'}
-										<span class="text-[11px] text-red-400">✕</span>
-									{:else}
-										<span class="text-[11px] text-white/30">✓✓</span>
-									{/if}
+									<span class="text-[10px] {msg._sending ? 'text-zinc-600' : msg._failed ? 'text-red-400' : 'text-accent/40'}">
+										{msg._sending ? '⏳' : msg._failed ? '✕' : '✓✓'}
+									</span>
 								{/if}
 							</div>
 						</div>
 					</div>
 				{/each}
-				{#if messages.length === 0}
-					<div class="flex items-center justify-center h-full text-white/20">
-						No hay mensajes en esta conversacion
-					</div>
-				{/if}
 			</div>
 
-			<!-- Message input -->
-			<div class="px-4 py-3 border-t border-white/10 bg-surface-light">
+			<!-- Input -->
+			<div class="px-4 py-3 border-t border-white/[0.06] bg-surface">
 				<div class="flex items-end gap-2">
-					<div class="flex-1 bg-[#2a3942] rounded-xl px-4 py-2">
+					<div class="flex-1 bg-elevated rounded-2xl px-4 py-2.5 border border-white/[0.06] focus-within:border-accent/30 transition-colors">
 						<textarea
 							bind:value={messageInput}
 							onkeydown={handleKeydown}
 							placeholder="Escribe un mensaje..."
 							rows="1"
-							class="w-full bg-transparent text-sm text-[#e9edef] placeholder-white/30 resize-none focus:outline-none"
-							style="max-height: 100px;"
+							class="w-full bg-transparent text-sm text-zinc-200 placeholder-zinc-600 resize-none focus:outline-none"
+							style="max-height: 96px;"
 						></textarea>
 					</div>
 					<button
 						onclick={sendMessage}
 						disabled={!messageInput.trim() || sending}
-						class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-black hover:bg-primary-light transition-colors disabled:opacity-30"
+						class="w-10 h-10 rounded-full bg-accent flex items-center justify-center text-black transition-all duration-150 disabled:opacity-20 hover:bg-accent-hover hover:shadow-lg hover:shadow-accent/20 active:scale-95 shrink-0"
 					>
-						➤
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
 					</button>
 				</div>
 			</div>
 		{:else}
-			<div class="flex-1 flex flex-col items-center justify-center text-white/20 gap-3">
-				<span class="text-6xl">💬</span>
-				<p class="text-lg">Selecciona una conversacion</p>
-				<p class="text-sm">O espera a que llegue un mensaje nuevo</p>
+			<div class="flex-1 flex flex-col items-center justify-center gap-3 animate-fade-in">
+				<div class="w-16 h-16 rounded-full bg-accent/[0.06] flex items-center justify-center">
+					<span class="text-3xl opacity-40">💬</span>
+				</div>
+				<p class="text-sm text-zinc-400">Selecciona una conversacion</p>
+				<p class="text-[11px] text-zinc-600">O espera un mensaje nuevo</p>
 			</div>
 		{/if}
 	</div>
 
-	<!-- Column 3: Contact panel (shows when conversation selected) -->
+	<!-- Col 3: Contact panel -->
 	{#if selectedConv}
-		<div class="w-72 border-l border-white/10 overflow-auto bg-surface p-4 space-y-4">
-			<div class="text-center">
-				<div class="w-16 h-16 rounded-full bg-primary/20 flex items-center justify-center text-2xl font-bold mx-auto">
-					{(selectedConv.lead_name || '?')[0]}
+		<div class="w-72 border-l border-white/[0.06] overflow-auto bg-surface shrink-0 animate-slide-in">
+			<div class="p-5 text-center border-b border-white/[0.06]">
+				<div class="w-16 h-16 rounded-full bg-accent/15 flex items-center justify-center text-xl font-bold text-accent mx-auto">
+					{initials(selectedConv.lead_name)}
 				</div>
-				<p class="font-medium mt-2">{selectedConv.lead_name || 'Sin nombre'}</p>
-				<p class="text-xs text-white/40">{selectedConv.lead_phone || selectedConv.lead_instagram || ''}</p>
+				<p class="font-medium mt-3 text-zinc-200">{selectedConv.lead_name || 'Sin nombre'}</p>
+				<p class="text-[11px] text-zinc-500 mt-0.5">{selectedConv.lead_phone || selectedConv.lead_instagram || ''}</p>
 			</div>
 
-			<div class="bg-white/5 rounded-lg p-3 space-y-2">
-				<h4 class="text-xs font-medium text-white/50">Scoring</h4>
-				<div class="flex items-center gap-3">
-					<span class="text-3xl font-bold text-primary">{selectedConv.lead_score}</span>
-					<span class="text-xs capitalize px-2 py-0.5 rounded-full {
-						selectedConv.lead_priority === 'urgent' ? 'bg-red-500/20 text-red-400' :
-						selectedConv.lead_priority === 'high' ? 'bg-orange-500/20 text-orange-400' :
-						selectedConv.lead_priority === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
-						'bg-gray-500/20 text-gray-400'
-					}">{selectedConv.lead_priority}</span>
+			<div class="p-4 space-y-3">
+				<!-- Score -->
+				{#if selectedConv}
+				{@const prio = priorityConfig[selectedConv.lead_priority]}
+				<div class="bg-white/[0.02] rounded-lg p-3 border border-white/[0.04]">
+					<p class="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Score</p>
+					<div class="flex items-center gap-3 mt-1.5">
+						<span class="text-3xl font-bold text-accent">{selectedConv.lead_score}</span>
+						<div class="flex items-center gap-1.5">
+							<span class="w-2 h-2 rounded-full {prio?.dot || ''}"></span>
+							<span class="text-xs text-zinc-400 capitalize">{prio?.label || ''}</span>
+						</div>
+					</div>
 				</div>
-			</div>
+				{/if}
 
-			<div class="bg-white/5 rounded-lg p-3 space-y-2">
-				<h4 class="text-xs font-medium text-white/50">Canal</h4>
-				<p class="text-sm">{channelIcon[selectedConv.channel]} {selectedConv.channel}</p>
-				<p class="text-xs text-white/40">Estado: {selectedConv.status}</p>
-				<p class="text-xs text-white/40">IA: {selectedConv.ai_enabled ? 'Activa' : 'Pausada'}</p>
-			</div>
+				<!-- Channel -->
+				{#if selectedConv}
+				{@const ch = channelConfig[selectedConv.channel]}
+				<div class="bg-white/[0.02] rounded-lg p-3 border border-white/[0.04]">
+					<p class="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Canal</p>
+					<p class="text-sm mt-1.5">{ch?.icon} {ch?.label || selectedConv.channel}</p>
+					<div class="flex items-center gap-2 mt-2">
+						<span class="text-[10px] text-zinc-600">Estado: {selectedConv.status}</span>
+						<span class="text-[10px] text-zinc-600">IA: {selectedConv.ai_enabled ? '✓' : '✕'}</span>
+					</div>
+				</div>
+				{/if}
 
-			<div class="space-y-2">
-				<a
-					href="/leads"
-					class="block w-full text-center text-xs px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
-				>
-					Ver perfil del lead →
+				<a href="/leads" class="block text-center text-[11px] px-3 py-2 bg-white/[0.03] hover:bg-white/[0.06] rounded-lg transition-colors text-zinc-400 hover:text-zinc-300 border border-white/[0.04]">
+					Ver perfil completo →
 				</a>
 			</div>
 		</div>
