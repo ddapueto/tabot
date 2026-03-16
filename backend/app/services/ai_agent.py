@@ -82,9 +82,13 @@ async def _generate_groq(
     system_prompt = build_system_prompt(company, lead)
     model = company.ai_model or settings.ai_model
 
-    # Enrich system prompt with catalog info for Groq (inline RAG instead of tools)
+    # Enrich system prompt with catalog (prices from DB) and KB (smart retrieval)
     catalog_context = await _get_catalog_context(db, company_id)
-    kb_context = await _get_kb_context(db, company_id)
+    from app.services.kb_manager import get_relevant_kb
+    kb_items = await get_relevant_kb(db, company_id, channel="whatsapp", max_items=10)
+    kb_context = "\n".join(
+        f"- {item.title}: {item.content[:300]}" for item in kb_items
+    ) if kb_items else ""
     enriched_prompt = system_prompt
     if catalog_context:
         enriched_prompt += f"\n\nCATALOGO DE PRODUCTOS DISPONIBLES:\n{catalog_context}"

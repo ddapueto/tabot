@@ -104,6 +104,27 @@ async def handle_inbound_message(
     if not response_text:
         return
 
+    # 6b. VALIDATE response before sending (price check, forbidden patterns, etc.)
+    from app.services.response_validator import validate_response
+    validation = await validate_response(db, company.id, response_text)
+
+    if validation["should_escalate"]:
+        # Critical issue — don't send AI response, escalate to human
+        logger.warning("AI response blocked for lead %s: %s", lead.id, validation["issues"])
+        response_text = (
+            "Voy a consultar esto con el equipo para darte una respuesta precisa. "
+            "Un vendedor te va a responder pronto."
+        )
+        # Pause AI on this conversation
+        conversation.ai_enabled = False
+        conversation.status = "handed_off"
+        await db.flush()
+    elif validation["corrected_response"] != response_text:
+        # Response was corrected (e.g., wrong price fixed)
+        logger.info("AI response corrected for lead %s: %s", lead.id,
+                    [i for i in validation["issues"] if i["type"] == "price_corrected"])
+        response_text = validation["corrected_response"]
+
     # 7. Send response via channel (skip in development if no real token)
     if channel == "whatsapp" and phone_number_id:
         from app.config import settings as _settings

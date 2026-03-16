@@ -1,8 +1,8 @@
-"""initial schema
+"""initial schema with kb lifecycle
 
-Revision ID: 673da6a79ab5
+Revision ID: aadb13fe51cb
 Revises: 
-Create Date: 2026-03-15 22:36:13.741920
+Create Date: 2026-03-16 15:00:15.606754
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '673da6a79ab5'
+revision: str = 'aadb13fe51cb'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -58,8 +58,17 @@ def upgrade() -> None:
     sa.Column('title', sa.String(length=500), nullable=True),
     sa.Column('content', sa.Text(), nullable=False),
     sa.Column('media_urls', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('item_type', sa.String(length=20), nullable=False),
+    sa.Column('expires_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('priority', sa.Integer(), nullable=False),
+    sa.Column('channels', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('is_active', sa.Boolean(), nullable=False),
     sa.Column('auto_generated', sa.Boolean(), nullable=False),
+    sa.Column('needs_review', sa.Boolean(), nullable=False),
+    sa.Column('review_reason', sa.String(length=200), nullable=True),
+    sa.Column('times_used', sa.Integer(), nullable=False),
+    sa.Column('last_used_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('product_id', sa.UUID(), nullable=True),
     sa.Column('metadata_extra', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('last_synced_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),

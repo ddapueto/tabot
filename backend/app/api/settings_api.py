@@ -184,3 +184,55 @@ async def delete_kb_item(
     item.is_active = False
     await db.flush()
     return {"status": "deactivated"}
+
+
+# ── Promos/Ofertas ──
+
+class PromoCreate(BaseModel):
+    title: str
+    content: str
+    expires_at: str  # ISO datetime
+    channels: list[str] = ["whatsapp", "instagram", "web"]
+    media_urls: list[str] | None = None
+
+
+@router.post("/{company_id}/promos", status_code=201)
+async def create_promo(
+    company_id: uuid.UUID,
+    data: PromoCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a promotional KB item with expiration."""
+    from datetime import datetime
+    from app.services.kb_manager import create_promo as _create_promo
+
+    expires = datetime.fromisoformat(data.expires_at)
+    item = await _create_promo(
+        db=db,
+        company_id=company_id,
+        title=data.title,
+        content=data.content,
+        expires_at=expires,
+        channels=data.channels,
+        media_urls=data.media_urls,
+    )
+    return {"id": str(item.id), "expires_at": data.expires_at, "status": "created"}
+
+
+# ── KB Health ──
+
+@router.get("/{company_id}/kb-health")
+async def kb_health(company_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Get knowledge base health metrics."""
+    from app.services.kb_manager import get_kb_health
+    return await get_kb_health(db, company_id)
+
+
+# ── Sync Catalog to KB ──
+
+@router.post("/{company_id}/sync-catalog")
+async def sync_catalog(company_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Sync all products to knowledge base."""
+    from app.services.kb_manager import sync_all_products_to_kb
+    synced = await sync_all_products_to_kb(db, company_id)
+    return {"synced": synced, "status": "catalog_synced"}

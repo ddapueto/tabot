@@ -12,6 +12,7 @@ celery = Celery(
     include=[
         "app.tasks.follow_ups",
         "app.tasks.notifications",
+        "app.tasks.kb_maintenance",
     ],
 )
 
@@ -32,6 +33,14 @@ celery.conf.update(
         "check-stale-leads": {
             "task": "app.tasks.follow_ups.check_stale_leads",
             "schedule": crontab(hour="9", minute="0"),  # daily at 9am
+        },
+        "expire-kb-items": {
+            "task": "app.tasks.kb_maintenance.expire_kb_items",
+            "schedule": 3600.0,  # every hour
+        },
+        "flag-stale-kb": {
+            "task": "app.tasks.kb_maintenance.flag_stale_kb_items",
+            "schedule": crontab(hour="8", minute="0"),  # daily at 8am
         },
     },
 )
