@@ -3,10 +3,12 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import hashlib
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from jose import JWTError, jwt
-from passlib.context import CryptContext
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -16,8 +18,24 @@ from app.database import get_db
 from app.models.user import User
 
 router = APIRouter()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
+
+
+def _hash_password(password: str) -> str:
+    """Hash password with PBKDF2-SHA256 (stdlib, no bcrypt dependency issues)."""
+    salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000)
+    return f"pbkdf2:{salt}:{h.hex()}"
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    """Verify password against PBKDF2 hash."""
+    try:
+        _, salt, stored_hash = hashed.split(":")
+        h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000)
+        return secrets.compare_digest(h.hex(), stored_hash)
+    except (ValueError, AttributeError):
+        return False
 
 
 # --- Schemas ---
@@ -125,7 +143,7 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
         email=data.email,
         name=data.name,
         role=data.role,
-        password_hash=pwd_context.hash(data.password),
+        password_hash=_hash_password(data.password),
     )
     db.add(user)
     await db.flush()
@@ -141,7 +159,7 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
     )
     user = result.scalar_one_or_none()
 
-    if not user or not pwd_context.verify(data.password, user.password_hash):
+    if not user or not _verify_password(data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Credenciales invalidas")
 
     if not user.is_active:

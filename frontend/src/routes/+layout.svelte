@@ -14,6 +14,8 @@
 		{ href: '/conversations', label: 'Inbox', icon: '💬' },
 		{ href: '/catalog', label: 'Catálogo', icon: '📦' },
 		{ href: '/follow-ups', label: 'Follow-ups', icon: '📬' },
+		{ href: '/analytics', label: 'Analytics', icon: '📈' },
+		{ href: '/settings', label: 'Config', icon: '⚙️' },
 	];
 
 	onMount(() => {
