@@ -5,8 +5,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.api import health, catalog, leads, conversations, auth, dashboard
-from app.api.webhooks import whatsapp
+from app.api import health, catalog, leads, conversations, auth, dashboard, follow_ups, broadcasts
+from app.api.webhooks import whatsapp, instagram
 
 
 @asynccontextmanager
@@ -42,3 +42,6 @@ app.include_router(leads.router, prefix="/api/leads", tags=["leads"])
 app.include_router(conversations.router, prefix="/api/conversations", tags=["conversations"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
+app.include_router(follow_ups.router, prefix="/api/follow-ups", tags=["follow-ups"])
+app.include_router(broadcasts.router, prefix="/api/broadcasts", tags=["broadcasts"])
+app.include_router(instagram.router, prefix="/webhooks", tags=["webhooks"])

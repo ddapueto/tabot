@@ -13,6 +13,7 @@
 		{ href: '/leads', label: 'Leads', icon: '👥' },
 		{ href: '/conversations', label: 'Inbox', icon: '💬' },
 		{ href: '/catalog', label: 'Catálogo', icon: '📦' },
+		{ href: '/follow-ups', label: 'Follow-ups', icon: '📬' },
 	];
 
 	onMount(() => {

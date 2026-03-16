@@ -61,12 +61,27 @@ async def handle_inbound_message(
     lead.last_message_at = datetime.now(timezone.utc)
     await db.flush()
 
-    # 4b. Score the lead based on message content
+    # 4b. Cancel pending follow-ups (lead responded)
+    try:
+        from app.services.follow_up_engine import cancel_followups_for_lead
+        await cancel_followups_for_lead(str(lead.id))
+    except Exception:
+        pass
+
+    # 4c. Score the lead based on message content
     if content:
         signals = extract_signals_from_message(content)
         if signals:
             scoring_rules = company.scoring_rules if hasattr(company, "scoring_rules") else None
-            await update_score(db, lead, signals, scoring_rules)
+            new_score = await update_score(db, lead, signals, scoring_rules)
+
+            # 4d. Alert seller if lead is hot (score >= 76)
+            if new_score >= 76:
+                try:
+                    from app.tasks.notifications import alert_hot_lead
+                    alert_hot_lead.delay(str(lead.id), str(company.id), new_score, lead.name)
+                except Exception:
+                    logger.warning("Failed to queue hot lead alert (Celery not running?)")
 
     # 5. Generate AI response if enabled
     if not conversation.ai_enabled:
