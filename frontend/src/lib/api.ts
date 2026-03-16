@@ -1,13 +1,40 @@
-const BASE = '';
+let _token: string | null = null;
+let _companyId: string | null = null;
 
-// TODO: Replace with actual company ID from auth
-const COMPANY_ID = 'a0000000-0000-0000-0000-000000000001';
+export function setAuth(token: string, companyId: string) {
+	_token = token;
+	_companyId = companyId;
+	localStorage.setItem('tabot:token', token);
+	localStorage.setItem('tabot:company_id', companyId);
+}
+
+export function loadAuth(): boolean {
+	_token = localStorage.getItem('tabot:token');
+	_companyId = localStorage.getItem('tabot:company_id');
+	return !!_token && !!_companyId;
+}
+
+export function clearAuth() {
+	_token = null;
+	_companyId = null;
+	localStorage.removeItem('tabot:token');
+	localStorage.removeItem('tabot:company_id');
+}
+
+export function getCompanyId(): string {
+	return _companyId || '';
+}
 
 async function request(path: string, options?: RequestInit) {
-	const res = await fetch(`${BASE}${path}`, {
-		headers: { 'Content-Type': 'application/json', ...options?.headers },
-		...options
-	});
+	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+	if (_token) headers['Authorization'] = `Bearer ${_token}`;
+
+	const res = await fetch(path, { headers, ...options });
+	if (res.status === 401) {
+		clearAuth();
+		window.location.href = '/login';
+		throw new Error('Sesion expirada');
+	}
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ detail: res.statusText }));
 		throw new Error(err.detail || 'Error de red');
@@ -15,10 +42,21 @@ async function request(path: string, options?: RequestInit) {
 	return res.json();
 }
 
+function cid() {
+	return _companyId || 'a0000000-0000-0000-0000-000000000001';
+}
+
 export const api = {
+	// Auth
+	login: (email: string, password: string, companyId: string) =>
+		request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password, company_id: companyId }) }),
+	register: (data: { email: string; password: string; name: string; company_id: string; role?: string }) =>
+		request('/api/auth/register', { method: 'POST', body: JSON.stringify(data) }),
+	me: () => request('/api/auth/me'),
+
 	// Dashboard
-	getStats: () => request(`/api/dashboard/${COMPANY_ID}/stats`),
-	getRecentLeads: (limit = 10) => request(`/api/dashboard/${COMPANY_ID}/recent-leads?limit=${limit}`),
+	getStats: () => request(`/api/dashboard/${cid()}/stats`),
+	getRecentLeads: (limit = 10) => request(`/api/dashboard/${cid()}/recent-leads?limit=${limit}`),
 
 	// Leads
 	getLeads: (params?: { stage?: string; priority?: string; limit?: number }) => {
@@ -26,41 +64,54 @@ export const api = {
 		if (params?.stage) qs.set('stage', params.stage);
 		if (params?.priority) qs.set('priority', params.priority);
 		if (params?.limit) qs.set('limit', String(params.limit));
-		return request(`/api/leads/${COMPANY_ID}?${qs}`);
+		return request(`/api/leads/${cid()}?${qs}`);
 	},
-	getLead: (id: string) => request(`/api/leads/${COMPANY_ID}/${id}`),
+	getLead: (id: string) => request(`/api/leads/${cid()}/${id}`),
 	updateLead: (id: string, data: Record<string, unknown>) =>
-		request(`/api/leads/${COMPANY_ID}/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+		request(`/api/leads/${cid()}/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
 	changeStage: (id: string, stage: string, reason?: string) =>
-		request(`/api/leads/${COMPANY_ID}/${id}/stage`, {
-			method: 'POST',
-			body: JSON.stringify({ stage, reason })
-		}),
+		request(`/api/leads/${cid()}/${id}/stage`, { method: 'POST', body: JSON.stringify({ stage, reason }) }),
 	handoff: (id: string, reason: string) =>
-		request(`/api/leads/${COMPANY_ID}/${id}/handoff`, {
-			method: 'POST',
-			body: JSON.stringify({ reason })
-		}),
+		request(`/api/leads/${cid()}/${id}/handoff`, { method: 'POST', body: JSON.stringify({ reason }) }),
 	reactivateAi: (id: string) =>
-		request(`/api/leads/${COMPANY_ID}/${id}/reactivate-ai`, { method: 'POST' }),
+		request(`/api/leads/${cid()}/${id}/reactivate-ai`, { method: 'POST' }),
 
 	// Conversations
 	getConversations: (params?: { status?: string; limit?: number }) => {
 		const qs = new URLSearchParams();
 		if (params?.status) qs.set('status', params.status);
 		if (params?.limit) qs.set('limit', String(params.limit));
-		return request(`/api/conversations/${COMPANY_ID}?${qs}`);
+		return request(`/api/conversations/${cid()}?${qs}`);
 	},
-	getConversation: (id: string) => request(`/api/conversations/${COMPANY_ID}/${id}`),
 	getMessages: (conversationId: string) =>
-		request(`/api/conversations/${COMPANY_ID}/${conversationId}/messages`),
+		request(`/api/conversations/${cid()}/${conversationId}/messages`),
+	sendMessage: (conversationId: string, content: string) =>
+		request(`/api/conversations/${cid()}/${conversationId}/send`, {
+			method: 'POST',
+			body: JSON.stringify({ content }),
+		}),
 
 	// Catalog
 	getProducts: (category?: string) => {
 		const qs = category ? `?category=${category}` : '';
-		return request(`/api/catalog/${COMPANY_ID}${qs}`);
+		return request(`/api/catalog/${cid()}${qs}`);
 	},
-	getProduct: (id: string) => request(`/api/catalog/${COMPANY_ID}/${id}`),
-	createProduct: (data: Record<string, unknown>) =>
-		request(`/api/catalog/${COMPANY_ID}`, { method: 'POST', body: JSON.stringify(data) }),
 };
+
+// SSE real-time connection
+export function connectSSE(onEvent: (event: any) => void): EventSource | null {
+	const id = cid();
+	if (!id) return null;
+
+	const es = new EventSource(`/api/conversations/${id}/events/stream`);
+	es.onmessage = (e) => {
+		try {
+			const data = JSON.parse(e.data);
+			if (data.type !== 'ping') onEvent(data);
+		} catch { /* ignore parse errors */ }
+	};
+	es.onerror = () => {
+		// Auto-reconnect is built into EventSource
+	};
+	return es;
+}

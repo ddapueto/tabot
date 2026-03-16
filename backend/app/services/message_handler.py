@@ -126,6 +126,34 @@ async def handle_inbound_message(
         ai_result.get("tokens_out", 0),
     )
 
+    # 9. Notify SSE listeners
+    try:
+        from app.api.conversations import _notify
+        _notify(str(company.id), {
+            "type": "new_message",
+            "conversation_id": str(conversation.id),
+            "lead_name": lead.name,
+            "message": {
+                "direction": "inbound",
+                "sender_type": "lead",
+                "content": content[:100],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        })
+        if response_text:
+            _notify(str(company.id), {
+                "type": "new_message",
+                "conversation_id": str(conversation.id),
+                "message": {
+                    "direction": "outbound",
+                    "sender_type": "ai",
+                    "content": response_text[:100],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            })
+    except Exception:
+        pass  # SSE notification is best-effort
+
 
 async def _find_company(
     db: AsyncSession, channel: str, phone_number_id: str | None
