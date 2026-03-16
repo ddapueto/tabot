@@ -25,8 +25,8 @@ TOOLS = [
                     "description": "Categoria del producto/servicio",
                 },
                 "price_max": {
-                    "type": "number",
-                    "description": "Precio maximo",
+                    "type": "string",
+                    "description": "Precio maximo (numero como texto)",
                 },
             },
         },
@@ -85,6 +85,19 @@ TOOLS = [
     },
 ]
 
+# OpenAI/Groq format (wraps each tool in {"type": "function", "function": {...}})
+TOOLS_OPENAI = [
+    {
+        "type": "function",
+        "function": {
+            "name": tool["name"],
+            "description": tool["description"],
+            "parameters": tool["input_schema"],
+        },
+    }
+    for tool in TOOLS
+]
+
 
 async def execute_tool(
     tool_name: str,
@@ -121,7 +134,11 @@ async def _buscar_producto(db: AsyncSession, company_id: uuid.UUID, params: dict
     if params.get("category"):
         query = query.where(Product.category == params["category"])
     if params.get("price_max"):
-        query = query.where(Product.price <= params["price_max"])
+        try:
+            price_max = float(str(params["price_max"]).replace(",", ""))
+            query = query.where(Product.price <= price_max)
+        except (ValueError, TypeError):
+            pass
 
     query = query.order_by(Product.display_order).limit(5)
     result = await db.execute(query)

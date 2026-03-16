@@ -24,9 +24,11 @@ class Settings(BaseSettings):
     instagram_account_id: str = ""
 
     # AI
+    ai_provider: str = "groq"  # "groq" or "anthropic"
     anthropic_api_key: str = ""
-    ai_model: str = "claude-sonnet-4-20250514"
-    ai_model_fast: str = "claude-haiku-4-5-20251001"
+    groq_api_key: str = ""
+    ai_model: str = "llama-3.3-70b-versatile"  # groq default
+    ai_model_fast: str = "llama-3.1-8b-instant"  # groq fast
 
     # Auth
     jwt_algorithm: str = "HS256"

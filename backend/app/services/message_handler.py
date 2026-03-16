@@ -81,9 +81,16 @@ async def handle_inbound_message(
     if not response_text:
         return
 
-    # 7. Send response via channel
+    # 7. Send response via channel (skip in development if no real token)
     if channel == "whatsapp" and phone_number_id:
-        await send_text_message(phone_number_id, sender_id, response_text)
+        from app.config import settings as _settings
+        if _settings.whatsapp_access_token:
+            try:
+                await send_text_message(phone_number_id, sender_id, response_text)
+            except Exception:
+                logger.warning("Failed to send WhatsApp message (dev mode?)")
+        else:
+            logger.info("Skipping WhatsApp send (no access token configured)")
 
     # 8. Save outbound message
     outbound_msg = Message(
