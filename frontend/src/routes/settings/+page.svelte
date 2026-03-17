@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getCompanyId } from '$lib/api';
+	import { api } from '$lib/api';
 
 	let settings = $state<any>(null);
 	let kbItems = $state<any[]>([]);
@@ -16,11 +16,10 @@
 	const sources = ['', 'faq', 'manual', 'instagram', 'catalog', 'document', 'website', 'conversation'];
 
 	onMount(async () => {
-		const cid = getCompanyId();
 		try {
 			const [s, kb] = await Promise.all([
-				fetch(`/api/settings/${cid}`).then(r => r.json()),
-				fetch(`/api/settings/${cid}/knowledge-base`).then(r => r.json()),
+				api.getSettings(),
+				api.getKBItems(),
 			]);
 			settings = s;
 			kbItems = kb;
@@ -32,18 +31,13 @@
 	async function saveSettings() {
 		if (!settings) return;
 		saving = true;
-		const cid = getCompanyId();
 		try {
-			await fetch(`/api/settings/${cid}`, {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					name: settings.name,
-					business_type: settings.business_type,
-					description: settings.description,
-					timezone: settings.timezone,
-					currency: settings.currency,
-				}),
+			await api.updateSettings({
+				name: settings.name,
+				business_type: settings.business_type,
+				description: settings.description,
+				timezone: settings.timezone,
+				currency: settings.currency,
 			});
 			showToast('Configuracion guardada');
 		} finally {
@@ -54,17 +48,12 @@
 	async function saveAIConfig() {
 		if (!settings) return;
 		saving = true;
-		const cid = getCompanyId();
 		try {
-			await fetch(`/api/settings/${cid}/ai`, {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					ai_personality: settings.ai_personality,
-					ai_language: settings.ai_language,
-					ai_sales_goal: settings.ai_sales_goal,
-					ai_custom_rules: settings.ai_custom_rules,
-				}),
+			await api.updateAIConfig({
+				ai_personality: settings.ai_personality,
+				ai_language: settings.ai_language,
+				ai_sales_goal: settings.ai_sales_goal,
+				ai_custom_rules: settings.ai_custom_rules,
 			});
 			showToast('Configuracion IA guardada');
 		} finally {
@@ -74,21 +63,15 @@
 
 	async function addKBItem() {
 		if (!newKbTitle || !newKbContent) return;
-		const cid = getCompanyId();
-		await fetch(`/api/settings/${cid}/knowledge-base`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title: newKbTitle, content: newKbContent }),
-		});
+		await api.addKBItem({ title: newKbTitle, content: newKbContent });
 		newKbTitle = '';
 		newKbContent = '';
-		kbItems = await fetch(`/api/settings/${cid}/knowledge-base`).then(r => r.json());
+		kbItems = await api.getKBItems();
 		showToast('Item agregado al KB');
 	}
 
 	async function deleteKBItem(id: string) {
-		const cid = getCompanyId();
-		await fetch(`/api/settings/${cid}/knowledge-base/${id}`, { method: 'DELETE' });
+		await api.deleteKBItem(id);
 		kbItems = kbItems.filter(i => i.id !== id);
 		showToast('Item desactivado');
 	}

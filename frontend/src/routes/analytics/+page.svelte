@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getCompanyId } from '$lib/api';
+	import { api } from '$lib/api';
 
 	let funnel = $state<any>(null);
 	let responseTimes = $state<any>(null);
@@ -11,15 +11,14 @@
 	let loading = $state(true);
 
 	onMount(async () => {
-		const cid = getCompanyId();
 		try {
 			const results = await Promise.all([
-				fetch(`/api/analytics/${cid}/conversion-funnel?days=30`).then(r => r.json()),
-				fetch(`/api/analytics/${cid}/response-times?days=30`).then(r => r.json()),
-				fetch(`/api/analytics/${cid}/ai-stats?days=30`).then(r => r.json()),
-				fetch(`/api/analytics/${cid}/top-products?days=30`).then(r => r.json()),
-				fetch(`/api/analytics/${cid}/scoring-distribution`).then(r => r.json()),
-				fetch(`/api/analytics/${cid}/leads-over-time?days=30`).then(r => r.json()),
+				api.getAnalytics('conversion-funnel'),
+				api.getAnalytics('response-times'),
+				api.getAnalytics('ai-stats'),
+				api.getAnalytics('top-products'),
+				api.getAnalytics('scoring-distribution'),
+				api.getAnalytics('leads-over-time'),
 			]);
 			[funnel, responseTimes, aiStats, topProducts, scoringDist, leadsOverTime] = results;
 		} catch (e) {

@@ -15,6 +15,7 @@ from app.models.conversation import Conversation
 from app.models.lead import Lead
 from app.models.message import Message
 from app.schemas.conversation import ConversationResponse, ConversationWithMessages, MessageResponse
+from app.api.deps import get_current_company_id
 
 router = APIRouter()
 
@@ -33,9 +34,9 @@ class SendMessageRequest(BaseModel):
     msg_type: str = "text"
 
 
-@router.get("/{company_id}", response_model=list[dict])
+@router.get("/", response_model=list[dict])
 async def list_conversations(
-    company_id: uuid.UUID,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     status: str | None = None,
     channel: str | None = None,
     limit: int = Query(default=50, le=200),
@@ -78,10 +79,10 @@ async def list_conversations(
     ]
 
 
-@router.get("/{company_id}/{conversation_id}", response_model=ConversationWithMessages)
+@router.get("/{conversation_id}", response_model=ConversationWithMessages)
 async def get_conversation(
-    company_id: uuid.UUID,
     conversation_id: uuid.UUID,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -95,10 +96,10 @@ async def get_conversation(
     return conversation
 
 
-@router.get("/{company_id}/{conversation_id}/messages", response_model=list[MessageResponse])
+@router.get("/{conversation_id}/messages", response_model=list[MessageResponse])
 async def list_messages(
-    company_id: uuid.UUID,
     conversation_id: uuid.UUID,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -120,11 +121,11 @@ async def list_messages(
     return result.scalars().all()
 
 
-@router.post("/{company_id}/{conversation_id}/send")
+@router.post("/{conversation_id}/send")
 async def send_human_message(
-    company_id: uuid.UUID,
     conversation_id: uuid.UUID,
     data: SendMessageRequest,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Send a message as a human agent in a conversation."""

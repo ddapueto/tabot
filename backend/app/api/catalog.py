@@ -1,3 +1,4 @@
+from app.api.deps import get_current_company_id
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,9 +12,9 @@ from app.schemas.catalog import ProductCreate, ProductResponse, ProductUpdate
 router = APIRouter()
 
 
-@router.get("/{company_id}", response_model=list[ProductResponse])
+@router.get("/", response_model=list[ProductResponse])
 async def list_products(
-    company_id: uuid.UUID,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     category: str | None = None,
     active_only: bool = True,
     db: AsyncSession = Depends(get_db),
@@ -29,10 +30,10 @@ async def list_products(
     return result.scalars().all()
 
 
-@router.get("/{company_id}/{product_id}", response_model=ProductResponse)
+@router.get("/{product_id}", response_model=ProductResponse)
 async def get_product(
-    company_id: uuid.UUID,
     product_id: uuid.UUID,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -45,10 +46,10 @@ async def get_product(
     return product
 
 
-@router.post("/{company_id}", response_model=ProductResponse, status_code=201)
+@router.post("/", response_model=ProductResponse, status_code=201)
 async def create_product(
-    company_id: uuid.UUID,
     data: ProductCreate,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
     product = Product(company_id=company_id, **data.model_dump())
@@ -58,11 +59,11 @@ async def create_product(
     return product
 
 
-@router.patch("/{company_id}/{product_id}", response_model=ProductResponse)
+@router.patch("/{product_id}", response_model=ProductResponse)
 async def update_product(
-    company_id: uuid.UUID,
     product_id: uuid.UUID,
     data: ProductUpdate,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(

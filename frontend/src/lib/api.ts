@@ -42,76 +42,85 @@ async function request(path: string, options?: RequestInit) {
 	return res.json();
 }
 
-function cid() {
-	return _companyId || 'a0000000-0000-0000-0000-000000000001';
-}
-
 export const api = {
-	// Auth
+	// Auth (no requiere token)
 	login: (email: string, password: string, companyId: string) =>
 		request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password, company_id: companyId }) }),
 	register: (data: { email: string; password: string; name: string; company_id: string; role?: string }) =>
 		request('/api/auth/register', { method: 'POST', body: JSON.stringify(data) }),
 	me: () => request('/api/auth/me'),
 
-	// Dashboard
-	getStats: () => request(`/api/dashboard/${cid()}/stats`),
-	getRecentLeads: (limit = 10) => request(`/api/dashboard/${cid()}/recent-leads?limit=${limit}`),
+	// Dashboard (auth required — company_id from JWT)
+	getStats: () => request('/api/dashboard/stats'),
+	getRecentLeads: (limit = 10) => request(`/api/dashboard/recent-leads?limit=${limit}`),
 
 	// Leads
-	getLeads: (params?: { stage?: string; priority?: string; limit?: number }) => {
+	getLeads: (params?: { stage?: string; priority?: string; search?: string; limit?: number }) => {
 		const qs = new URLSearchParams();
 		if (params?.stage) qs.set('stage', params.stage);
 		if (params?.priority) qs.set('priority', params.priority);
+		if (params?.search) qs.set('search', params.search);
 		if (params?.limit) qs.set('limit', String(params.limit));
-		return request(`/api/leads/${cid()}?${qs}`);
+		return request(`/api/leads/?${qs}`);
 	},
-	getLead: (id: string) => request(`/api/leads/${cid()}/${id}`),
+	getLead: (id: string) => request(`/api/leads/${id}`),
 	updateLead: (id: string, data: Record<string, unknown>) =>
-		request(`/api/leads/${cid()}/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+		request(`/api/leads/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
 	changeStage: (id: string, stage: string, reason?: string) =>
-		request(`/api/leads/${cid()}/${id}/stage`, { method: 'POST', body: JSON.stringify({ stage, reason }) }),
+		request(`/api/leads/${id}/stage`, { method: 'POST', body: JSON.stringify({ stage, reason }) }),
 	handoff: (id: string, reason: string) =>
-		request(`/api/leads/${cid()}/${id}/handoff`, { method: 'POST', body: JSON.stringify({ reason }) }),
+		request(`/api/leads/${id}/handoff`, { method: 'POST', body: JSON.stringify({ reason }) }),
 	reactivateAi: (id: string) =>
-		request(`/api/leads/${cid()}/${id}/reactivate-ai`, { method: 'POST' }),
+		request(`/api/leads/${id}/reactivate-ai`, { method: 'POST' }),
 
 	// Conversations
 	getConversations: (params?: { status?: string; limit?: number }) => {
 		const qs = new URLSearchParams();
 		if (params?.status) qs.set('status', params.status);
 		if (params?.limit) qs.set('limit', String(params.limit));
-		return request(`/api/conversations/${cid()}?${qs}`);
+		return request(`/api/conversations/?${qs}`);
 	},
 	getMessages: (conversationId: string) =>
-		request(`/api/conversations/${cid()}/${conversationId}/messages`),
+		request(`/api/conversations/${conversationId}/messages`),
 	sendMessage: (conversationId: string, content: string) =>
-		request(`/api/conversations/${cid()}/${conversationId}/send`, {
-			method: 'POST',
-			body: JSON.stringify({ content }),
+		request(`/api/conversations/${conversationId}/send`, {
+			method: 'POST', body: JSON.stringify({ content }),
 		}),
 
 	// Catalog
-	getProducts: (category?: string) => {
-		const qs = category ? `?category=${category}` : '';
-		return request(`/api/catalog/${cid()}${qs}`);
-	},
+	getProducts: (category?: string) =>
+		request(`/api/catalog/${category ? `?category=${category}` : ''}`),
+
+	// Analytics
+	getAnalytics: (endpoint: string, days = 30) =>
+		request(`/api/analytics/${endpoint}?days=${days}`),
+
+	// Settings
+	getSettings: () => request('/api/settings/'),
+	updateSettings: (data: Record<string, unknown>) =>
+		request('/api/settings/', { method: 'PATCH', body: JSON.stringify(data) }),
+	updateAIConfig: (data: Record<string, unknown>) =>
+		request('/api/settings/ai', { method: 'PATCH', body: JSON.stringify(data) }),
+	getKBItems: (source?: string) =>
+		request(`/api/settings/knowledge-base${source ? `?source=${source}` : ''}`),
+	addKBItem: (data: { title: string; content: string; source?: string }) =>
+		request('/api/settings/knowledge-base', { method: 'POST', body: JSON.stringify(data) }),
+	deleteKBItem: (id: string) =>
+		request(`/api/settings/knowledge-base/${id}`, { method: 'DELETE' }),
+	getKBHealth: () => request('/api/settings/kb-health'),
+	syncCatalog: () => request('/api/settings/sync-catalog', { method: 'POST' }),
 };
 
-// SSE real-time connection
+// SSE — conversations use company_id in URL (no auth for SSE)
 export function connectSSE(onEvent: (event: any) => void): EventSource | null {
-	const id = cid();
+	const id = _companyId;
 	if (!id) return null;
-
 	const es = new EventSource(`/api/conversations/${id}/events/stream`);
 	es.onmessage = (e) => {
 		try {
 			const data = JSON.parse(e.data);
 			if (data.type !== 'ping') onEvent(data);
-		} catch { /* ignore parse errors */ }
-	};
-	es.onerror = () => {
-		// Auto-reconnect is built into EventSource
+		} catch { /* ignore */ }
 	};
 	return es;
 }

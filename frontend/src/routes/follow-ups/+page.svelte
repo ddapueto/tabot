@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getCompanyId } from '$lib/api';
+	import { api } from '$lib/api';
 
 	let sequences = $state<Record<string, any>>({});
 	let followups = $state<any[]>([]);
@@ -15,11 +15,11 @@
 	};
 
 	onMount(async () => {
-		const cid = getCompanyId();
 		try {
+			// These still use the old URL pattern since follow-ups/sequences don't use auth yet
 			const [seqData, fuData] = await Promise.all([
-				fetch(`/api/follow-ups/${cid}/sequences`).then(r => r.json()),
-				fetch(`/api/follow-ups/${cid}/pending`).then(r => r.json()),
+				fetch('/api/follow-ups/sequences', { headers: { 'Authorization': `Bearer ${localStorage.getItem('tabot:token')}` } }).then(r => r.json()),
+				fetch('/api/follow-ups/pending', { headers: { 'Authorization': `Bearer ${localStorage.getItem('tabot:token')}` } }).then(r => r.json()),
 			]);
 			sequences = seqData;
 			followups = fuData;

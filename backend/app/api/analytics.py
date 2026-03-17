@@ -1,3 +1,4 @@
+from app.api.deps import get_current_company_id
 """Analytics API — conversion metrics, response times, product popularity, AI costs."""
 
 import uuid
@@ -15,9 +16,9 @@ from app.models.message import Message
 router = APIRouter()
 
 
-@router.get("/{company_id}/conversion-funnel")
+@router.get("/conversion-funnel")
 async def conversion_funnel(
-    company_id: uuid.UUID,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     days: int = Query(default=30, le=90),
     db: AsyncSession = Depends(get_db),
 ):
@@ -43,9 +44,9 @@ async def conversion_funnel(
     }
 
 
-@router.get("/{company_id}/response-times")
+@router.get("/response-times")
 async def response_times(
-    company_id: uuid.UUID,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     days: int = Query(default=30, le=90),
     db: AsyncSession = Depends(get_db),
 ):
@@ -83,9 +84,9 @@ async def response_times(
     }
 
 
-@router.get("/{company_id}/ai-stats")
+@router.get("/ai-stats")
 async def ai_stats(
-    company_id: uuid.UUID,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     days: int = Query(default=30, le=90),
     db: AsyncSession = Depends(get_db),
 ):
@@ -129,9 +130,9 @@ async def ai_stats(
     }
 
 
-@router.get("/{company_id}/leads-over-time")
+@router.get("/leads-over-time")
 async def leads_over_time(
-    company_id: uuid.UUID,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     days: int = Query(default=30, le=90),
     db: AsyncSession = Depends(get_db),
 ):
@@ -157,9 +158,9 @@ async def leads_over_time(
     }
 
 
-@router.get("/{company_id}/top-products")
+@router.get("/top-products")
 async def top_products(
-    company_id: uuid.UUID,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     days: int = Query(default=30, le=90),
     db: AsyncSession = Depends(get_db),
 ):
@@ -201,9 +202,9 @@ async def top_products(
     return {"period_days": days, "products": product_mentions}
 
 
-@router.get("/{company_id}/scoring-distribution")
+@router.get("/scoring-distribution")
 async def scoring_distribution(
-    company_id: uuid.UUID,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Distribution of lead scores."""

@@ -1,3 +1,4 @@
+from app.api.deps import get_current_company_id
 """Company settings and AI configuration API."""
 
 import uuid
@@ -33,8 +34,8 @@ class AIConfigUpdate(BaseModel):
     scoring_rules: dict | None = None
 
 
-@router.get("/{company_id}")
-async def get_settings(company_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+@router.get("/")
+async def get_settings(company_id: uuid.UUID = Depends(get_current_company_id), db: AsyncSession = Depends(get_db)):
     """Get company settings."""
     result = await db.execute(select(Company).where(Company.id == company_id))
     company = result.scalar_one_or_none()
@@ -65,10 +66,10 @@ async def get_settings(company_id: uuid.UUID, db: AsyncSession = Depends(get_db)
     }
 
 
-@router.patch("/{company_id}")
+@router.patch("/")
 async def update_settings(
-    company_id: uuid.UUID,
     data: CompanySettingsUpdate,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Update company settings."""
@@ -84,10 +85,10 @@ async def update_settings(
     return {"status": "updated"}
 
 
-@router.patch("/{company_id}/ai")
+@router.patch("/ai")
 async def update_ai_config(
-    company_id: uuid.UUID,
     data: AIConfigUpdate,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Update AI agent configuration."""
@@ -112,9 +113,9 @@ class KBItemCreate(BaseModel):
     media_urls: list[str] | None = None
 
 
-@router.get("/{company_id}/knowledge-base")
+@router.get("/knowledge-base")
 async def list_kb_items(
-    company_id: uuid.UUID,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     source: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
@@ -142,10 +143,10 @@ async def list_kb_items(
     ]
 
 
-@router.post("/{company_id}/knowledge-base", status_code=201)
+@router.post("/knowledge-base", status_code=201)
 async def create_kb_item(
-    company_id: uuid.UUID,
     data: KBItemCreate,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Add a knowledge base item."""
@@ -164,10 +165,10 @@ async def create_kb_item(
     return {"id": str(item.id), "status": "created"}
 
 
-@router.delete("/{company_id}/knowledge-base/{item_id}")
+@router.delete("/knowledge-base/{item_id}")
 async def delete_kb_item(
-    company_id: uuid.UUID,
     item_id: uuid.UUID,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Soft-delete a KB item."""
@@ -196,10 +197,10 @@ class PromoCreate(BaseModel):
     media_urls: list[str] | None = None
 
 
-@router.post("/{company_id}/promos", status_code=201)
+@router.post("/promos", status_code=201)
 async def create_promo(
-    company_id: uuid.UUID,
     data: PromoCreate,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a promotional KB item with expiration."""
@@ -221,8 +222,8 @@ async def create_promo(
 
 # ── KB Health ──
 
-@router.get("/{company_id}/kb-health")
-async def kb_health(company_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+@router.get("/kb-health")
+async def kb_health(company_id: uuid.UUID = Depends(get_current_company_id), db: AsyncSession = Depends(get_db)):
     """Get knowledge base health metrics."""
     from app.services.kb_manager import get_kb_health
     return await get_kb_health(db, company_id)
@@ -230,8 +231,8 @@ async def kb_health(company_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
 
 # ── Sync Catalog to KB ──
 
-@router.post("/{company_id}/sync-catalog")
-async def sync_catalog(company_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+@router.post("/sync-catalog")
+async def sync_catalog(company_id: uuid.UUID = Depends(get_current_company_id), db: AsyncSession = Depends(get_db)):
     """Sync all products to knowledge base."""
     from app.services.kb_manager import sync_all_products_to_kb
     synced = await sync_all_products_to_kb(db, company_id)

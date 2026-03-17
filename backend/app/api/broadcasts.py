@@ -1,3 +1,4 @@
+from app.api.deps import get_current_company_id
 """Broadcast API — send bulk messages to lead segments."""
 
 import uuid
@@ -22,10 +23,10 @@ class BroadcastRequest(BaseModel):
     limit: int = 100
 
 
-@router.post("/{company_id}/preview")
+@router.post("/preview")
 async def preview_broadcast(
-    company_id: uuid.UUID,
     data: BroadcastRequest,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Preview which leads would receive the broadcast."""
@@ -56,10 +57,10 @@ async def preview_broadcast(
     }
 
 
-@router.post("/{company_id}/send")
+@router.post("/send")
 async def send_broadcast(
-    company_id: uuid.UUID,
     data: BroadcastRequest,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Send broadcast message to filtered leads."""

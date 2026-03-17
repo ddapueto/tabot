@@ -1,3 +1,4 @@
+from app.api.deps import get_current_company_id
 """Follow-up management API."""
 
 import uuid
@@ -17,8 +18,8 @@ from app.services.follow_up_engine import (
 router = APIRouter()
 
 
-@router.get("/{company_id}/sequences")
-async def list_sequences(company_id: uuid.UUID):
+@router.get("/sequences")
+async def list_sequences(company_id: uuid.UUID = Depends(get_current_company_id)):
     """List available follow-up sequences."""
     return {
         key: {
@@ -32,8 +33,8 @@ async def list_sequences(company_id: uuid.UUID):
     }
 
 
-@router.get("/{company_id}/pending")
-async def list_pending(company_id: uuid.UUID):
+@router.get("/pending")
+async def list_pending(company_id: uuid.UUID = Depends(get_current_company_id)):
     """List all follow-ups (pending, sent, cancelled)."""
     all_followups = get_all_followups()
     company_followups = [f for f in all_followups if f["company_id"] == str(company_id)]
@@ -46,10 +47,10 @@ class ScheduleRequest(BaseModel):
     sequence_key: str
 
 
-@router.post("/{company_id}/schedule")
+@router.post("/schedule")
 async def schedule(
-    company_id: uuid.UUID,
     data: ScheduleRequest,
+    company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Manually schedule a follow-up sequence for a lead."""
@@ -65,8 +66,8 @@ async def schedule(
     return result
 
 
-@router.post("/{company_id}/cancel/{lead_id}")
-async def cancel(company_id: uuid.UUID, lead_id: uuid.UUID):
+@router.post("/cancel/{lead_id}")
+async def cancel(lead_id: uuid.UUID, company_id: uuid.UUID = Depends(get_current_company_id)):
     """Cancel all pending follow-ups for a lead."""
     cancelled = await cancel_followups_for_lead(str(lead_id))
     return {"cancelled": cancelled}
