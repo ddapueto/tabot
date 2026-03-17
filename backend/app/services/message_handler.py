@@ -64,7 +64,7 @@ async def handle_inbound_message(
     # 4b. Cancel pending follow-ups (lead responded)
     try:
         from app.services.follow_up_engine import cancel_followups_for_lead
-        await cancel_followups_for_lead(str(lead.id))
+        await cancel_followups_for_lead(db, lead.id)
     except Exception:
         pass
 

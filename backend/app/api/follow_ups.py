@@ -1,5 +1,4 @@
-from app.api.deps import get_current_company_id
-"""Follow-up management API."""
+"""Follow-up management API — DB-backed."""
 
 import uuid
 
@@ -8,10 +7,11 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.api.deps import get_current_company_id
 from app.services.follow_up_engine import (
     DEFAULT_SEQUENCES,
     cancel_followups_for_lead,
-    get_all_followups,
+    get_all_followups_for_company,
     schedule_followup,
 )
 
@@ -20,7 +20,6 @@ router = APIRouter()
 
 @router.get("/sequences")
 async def list_sequences(company_id: uuid.UUID = Depends(get_current_company_id)):
-    """List available follow-up sequences."""
     return {
         key: {
             "name": seq["name"],
@@ -34,11 +33,11 @@ async def list_sequences(company_id: uuid.UUID = Depends(get_current_company_id)
 
 
 @router.get("/pending")
-async def list_pending(company_id: uuid.UUID = Depends(get_current_company_id)):
-    """List all follow-ups (pending, sent, cancelled)."""
-    all_followups = get_all_followups()
-    company_followups = [f for f in all_followups if f["company_id"] == str(company_id)]
-    return company_followups
+async def list_pending(
+    company_id: uuid.UUID = Depends(get_current_company_id),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_all_followups_for_company(db, company_id)
 
 
 class ScheduleRequest(BaseModel):
@@ -53,7 +52,6 @@ async def schedule(
     company_id: uuid.UUID = Depends(get_current_company_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Manually schedule a follow-up sequence for a lead."""
     result = await schedule_followup(
         db=db,
         lead_id=uuid.UUID(data.lead_id),
@@ -63,11 +61,14 @@ async def schedule(
     )
     if not result:
         return {"error": "Secuencia no encontrada o sin pasos"}
-    return result
+    return {"id": str(result.id), "status": "scheduled", "scheduled_at": result.scheduled_at.isoformat()}
 
 
 @router.post("/cancel/{lead_id}")
-async def cancel(lead_id: uuid.UUID, company_id: uuid.UUID = Depends(get_current_company_id)):
-    """Cancel all pending follow-ups for a lead."""
-    cancelled = await cancel_followups_for_lead(str(lead_id))
+async def cancel(
+    lead_id: uuid.UUID,
+    company_id: uuid.UUID = Depends(get_current_company_id),
+    db: AsyncSession = Depends(get_db),
+):
+    cancelled = await cancel_followups_for_lead(db, lead_id)
     return {"cancelled": cancelled}
