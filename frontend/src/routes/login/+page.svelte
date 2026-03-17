@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { api, setAuth } from '$lib/api';
+	import { onMount } from 'svelte';
+	import { initTheme } from '$lib/theme.svelte';
+
+	onMount(() => initTheme());
 
 	let email = $state('');
 	let password = $state('');
