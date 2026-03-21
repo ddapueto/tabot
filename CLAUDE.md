@@ -120,6 +120,15 @@ cd frontend && npm run dev                    # Puerto 5173+
 # Login: martin@casasdelbosque.uy / demo1234
 ```
 
+## Steering Docs (leer para contexto)
+- `docs/steering/product.md` — visión, usuarios target, métricas, competencia
+- `docs/steering/tech.md` — stack, constraints (MUST/SHOULD/SHOULD NOT), patrones
+- `docs/steering/structure.md` — organización archivos, convenciones naming, imports
+
+## Specs (qué construir)
+Ver `docs/specs/README.md` — 10 specs con requirements/design/tasks.
+Cada spec es autocontenida. Ejecutar: `leé docs/specs/spec-NN/ y ejecutá las tasks`
+
 ## Agentes: ver .claude/agents/
 architect, backend, frontend, ai-engineer, integrations, qa, growth
 
