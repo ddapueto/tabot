@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "kagami": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory", "/Users/ddapueto/projects/personal/kagami-mcp",
+        "kagami-mcp",
+        "--root", "."
+      ]
+    }
+  }
+}
