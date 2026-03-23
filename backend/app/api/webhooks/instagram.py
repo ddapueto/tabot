@@ -3,7 +3,6 @@
 import hashlib
 import hmac
 import logging
-import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
@@ -105,40 +104,63 @@ async def _handle_dm(db: AsyncSession, messaging: dict):
         logger.exception("Error processing Instagram DM")
 
 
-async def _handle_comment(db: AsyncSession, value: dict, ig_account_id: str | None):
+async def _handle_comment(
+    db: AsyncSession, value: dict, ig_account_id: str | None,
+):
     """Process an Instagram comment — auto-reply + capture lead."""
-    comment_id = value.get("id")
-    text = value.get("text", "")
-    from_user = value.get("from", {})
-    from_id = from_user.get("id", "")
-    media_id = value.get("media", {}).get("id")
-
-    if not from_id or not text:
+    parsed = _parse_comment_event(value)
+    if not parsed:
         return
 
     company = await _find_company_by_ig(db, ig_account_id)
     if not company:
         return
 
-    # Detect purchase intent keywords
-    intent_keywords = ["precio", "cuanto", "info", "disponible", "quiero", "interesa", "venden", "comprar", "envio"]
-    has_intent = any(kw in text.lower() for kw in intent_keywords)
+    if not parsed["has_intent"]:
+        return
 
-    if has_intent:
-        try:
-            await handle_inbound_message(
-                db=db,
-                channel="instagram_comment",
-                phone_number_id=None,
-                sender_id=from_id,
-                sender_name=from_user.get("username"),
-                msg_type="text",
-                content=f"[Comentario en IG] {text}",
-                channel_msg_id=comment_id,
-            )
-            logger.info("Captured lead from IG comment: %s (%s)", from_user.get("username"), text[:50])
-        except Exception:
-            logger.exception("Error processing IG comment as lead")
+    try:
+        await handle_inbound_message(
+            db=db,
+            channel="instagram_comment",
+            phone_number_id=None,
+            sender_id=parsed["from_id"],
+            sender_name=parsed["username"],
+            msg_type="text",
+            content=f"[Comentario en IG] {parsed['text']}",
+            channel_msg_id=parsed["comment_id"],
+        )
+        logger.info(
+            "Captured lead from IG comment: %s (%s)",
+            parsed["username"],
+            parsed["text"][:50],
+        )
+    except Exception:
+        logger.exception("Error processing IG comment as lead")
+
+
+INTENT_KEYWORDS = [
+    "precio", "cuanto", "info", "disponible", "quiero",
+    "interesa", "venden", "comprar", "envio",
+]
+
+
+def _parse_comment_event(value: dict) -> dict | None:
+    """Parse Instagram comment payload into normalized dict."""
+    text = value.get("text", "")
+    from_user = value.get("from", {})
+    from_id = from_user.get("id", "")
+
+    if not from_id or not text:
+        return None
+
+    return {
+        "comment_id": value.get("id"),
+        "text": text,
+        "from_id": from_id,
+        "username": from_user.get("username"),
+        "has_intent": any(kw in text.lower() for kw in INTENT_KEYWORDS),
+    }
 
 
 async def _handle_content(db: AsyncSession, value: dict, ig_account_id: str | None):

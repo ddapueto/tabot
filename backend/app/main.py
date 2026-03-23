@@ -1,12 +1,25 @@
-from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import (
+    analytics,
+    auth,
+    broadcasts,
+    catalog,
+    conversations,
+    dashboard,
+    follow_ups,
+    health,
+    kb,
+    leads,
+    onboarding,
+    settings_api,
+)
+from app.api.webhooks import instagram, whatsapp
 from app.config import settings
-from app.api import health, catalog, leads, conversations, auth, dashboard, follow_ups, broadcasts, analytics, settings_api, onboarding
-from app.api.webhooks import whatsapp, instagram
 
 
 @asynccontextmanager
@@ -47,4 +60,5 @@ app.include_router(broadcasts.router, prefix="/api/broadcasts", tags=["broadcast
 app.include_router(instagram.router, prefix="/webhooks", tags=["webhooks"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(settings_api.router, prefix="/api/settings", tags=["settings"])
+app.include_router(kb.router, prefix="/api/kb", tags=["knowledge-base"])
 app.include_router(onboarding.router, prefix="/api/onboarding", tags=["onboarding"])

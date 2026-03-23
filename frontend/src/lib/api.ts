@@ -102,13 +102,13 @@ export const api = {
 	updateAIConfig: (data: Record<string, unknown>) =>
 		request('/api/settings/ai', { method: 'PATCH', body: JSON.stringify(data) }),
 	getKBItems: (source?: string) =>
-		request(`/api/settings/knowledge-base${source ? `?source=${source}` : ''}`),
+		request(`/api/kb/${source ? `?source=${source}` : ''}`),
 	addKBItem: (data: { title: string; content: string; source?: string }) =>
-		request('/api/settings/knowledge-base', { method: 'POST', body: JSON.stringify(data) }),
+		request('/api/kb/', { method: 'POST', body: JSON.stringify(data) }),
 	deleteKBItem: (id: string) =>
-		request(`/api/settings/knowledge-base/${id}`, { method: 'DELETE' }),
-	getKBHealth: () => request('/api/settings/kb-health'),
-	syncCatalog: () => request('/api/settings/sync-catalog', { method: 'POST' }),
+		request(`/api/kb/${id}`, { method: 'DELETE' }),
+	getKBHealth: () => request('/api/kb/health'),
+	syncCatalog: () => request('/api/kb/sync-catalog', { method: 'POST' }),
 };
 
 // SSE — conversations use company_id in URL (no auth for SSE)
