@@ -9,7 +9,7 @@ Internet → Caddy (HTTPS :443)
   └── /*            → frontend:3000 (SvelteKit node)
 
 Internal network (Docker):
-  ├── postgres:5432 (pgvector:pg16)
+  ├── postgres:5435 (pgvector:pg16)
   ├── redis:6379
   ├── celery-worker (same image as api)
   └── celery-beat (same image as api)

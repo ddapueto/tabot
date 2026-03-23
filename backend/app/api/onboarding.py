@@ -7,10 +7,11 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import _hash_password, create_tokens
 from app.database import get_db
 from app.models.company import Company
+from app.models.knowledge import KnowledgeItem
 from app.models.user import User
-from app.api.auth import _hash_password, create_tokens
 
 router = APIRouter()
 
@@ -103,15 +104,43 @@ async def setup_company(data: OnboardingRequest, db: AsyncSession = Depends(get_
     await db.flush()
 
     # 3. Create default KB items
-    from app.models.knowledge import KnowledgeItem
+    await _create_default_kb(db, company.id)
+    await db.flush()
+
+    # 4. Generate tokens
+    tokens = create_tokens(str(user.id), str(company.id), user.role)
+
+    return OnboardingResponse(
+        company_id=str(company.id),
+        company_name=company.name,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        message=(
+            f"Empresa '{company.name}' creada. "
+            "Configura tu catalogo y conocimiento en Settings."
+        ),
+    )
+
+
+async def _create_default_kb(db: AsyncSession, company_id) -> None:
+    """Create default FAQ knowledge base items for a new company."""
     default_kb = [
-        ("faq", "Horario de atencion", f"Nuestro horario de atencion es de lunes a viernes de 9 a 18hs."),
-        ("faq", "Formas de pago", "Aceptamos efectivo, tarjeta de credito/debito, y transferencia bancaria."),
-        ("faq", "Contacto", f"Podes contactarnos por WhatsApp o Instagram. Responderemos lo antes posible."),
+        (
+            "faq", "Horario de atencion",
+            "Nuestro horario de atencion es de lunes a viernes de 9 a 18hs.",
+        ),
+        (
+            "faq", "Formas de pago",
+            "Aceptamos efectivo, tarjeta de credito/debito, y transferencia bancaria.",
+        ),
+        (
+            "faq", "Contacto",
+            "Podes contactarnos por WhatsApp o Instagram. Responderemos lo antes posible.",
+        ),
     ]
     for source, title, content in default_kb:
         item = KnowledgeItem(
-            company_id=company.id,
+            company_id=company_id,
             source=source,
             title=title,
             content=content,
@@ -124,16 +153,3 @@ async def setup_company(data: OnboardingRequest, db: AsyncSession = Depends(get_
             review_reason="Generado automaticamente — revisar y personalizar",
         )
         db.add(item)
-
-    await db.flush()
-
-    # 4. Generate tokens
-    tokens = create_tokens(str(user.id), str(company.id), user.role)
-
-    return OnboardingResponse(
-        company_id=str(company.id),
-        company_name=company.name,
-        access_token=tokens.access_token,
-        refresh_token=tokens.refresh_token,
-        message=f"Empresa '{company.name}' creada. Configura tu catalogo y conocimiento en Settings.",
-    )

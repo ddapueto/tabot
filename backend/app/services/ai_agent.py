@@ -1,13 +1,15 @@
-import json
 import logging
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.company import Company
 from app.models.lead import Lead
-from app.services.ai_tools import TOOLS, TOOLS_OPENAI, execute_tool
+from app.models.product import Product
+from app.services.ai_tools import TOOLS, execute_tool
+from app.services.kb_manager import get_relevant_kb
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,43 @@ REGLAS:
     return prompt
 
 
+async def _enrich_system_prompt(
+    db: AsyncSession,
+    company_id: uuid.UUID,
+    base_prompt: str,
+    channel: str = "whatsapp",
+) -> str:
+    """Enrich system prompt with catalog and KB context (inline RAG)."""
+    enriched = base_prompt
+
+    catalog_context = await _get_catalog_context(db, company_id)
+    if catalog_context:
+        enriched += f"\n\nCATALOGO DE PRODUCTOS DISPONIBLES:\n{catalog_context}"
+
+    kb_items = await get_relevant_kb(db, company_id, channel=channel, max_items=10)
+    if kb_items:
+        kb_context = "\n".join(
+            f"- {item.title}: {item.content[:300]}" for item in kb_items
+        )
+        enriched += f"\n\nINFORMACION ADICIONAL (FAQ/KB):\n{kb_context}"
+
+    return enriched
+
+
+def _format_error_result(error: Exception) -> dict:
+    """Format a fallback result when AI provider fails."""
+    return {
+        "text": (
+            "Disculpa, estoy teniendo un problema tecnico. "
+            "Un miembro del equipo te va a responder pronto."
+        ),
+        "model": "fallback",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "tools_used": [],
+    }
+
+
 async def generate_response(
     company: Company,
     lead: Lead | None,
@@ -79,21 +118,10 @@ async def _generate_groq(
     from groq import AsyncGroq
 
     client = AsyncGroq(api_key=settings.groq_api_key)
-    system_prompt = build_system_prompt(company, lead)
     model = company.ai_model or settings.ai_model
 
-    # Enrich system prompt with catalog (prices from DB) and KB (smart retrieval)
-    catalog_context = await _get_catalog_context(db, company_id)
-    from app.services.kb_manager import get_relevant_kb
-    kb_items = await get_relevant_kb(db, company_id, channel="whatsapp", max_items=10)
-    kb_context = "\n".join(
-        f"- {item.title}: {item.content[:300]}" for item in kb_items
-    ) if kb_items else ""
-    enriched_prompt = system_prompt
-    if catalog_context:
-        enriched_prompt += f"\n\nCATALOGO DE PRODUCTOS DISPONIBLES:\n{catalog_context}"
-    if kb_context:
-        enriched_prompt += f"\n\nINFORMACION ADICIONAL (FAQ/KB):\n{kb_context}"
+    base_prompt = build_system_prompt(company, lead)
+    enriched_prompt = await _enrich_system_prompt(db, company_id, base_prompt)
 
     messages = [{"role": "system", "content": enriched_prompt}, *conversation_history]
 
@@ -106,10 +134,8 @@ async def _generate_groq(
         )
 
         choice = response.choices[0]
-        result_text = choice.message.content or ""
-
         return {
-            "text": result_text,
+            "text": choice.message.content or "",
             "model": response.model,
             "tokens_in": response.usage.prompt_tokens if response.usage else 0,
             "tokens_out": response.usage.completion_tokens if response.usage else 0,
@@ -118,20 +144,11 @@ async def _generate_groq(
 
     except Exception as e:
         logger.exception("Groq API error: %s", str(e))
-        return {
-            "text": f"Disculpa, estoy teniendo un problema tecnico. Un miembro del equipo te va a responder pronto. (debug: {type(e).__name__}: {str(e)[:100]})",
-            "model": "fallback",
-            "tokens_in": 0,
-            "tokens_out": 0,
-            "tools_used": [],
-        }
+        return _format_error_result(e)
 
 
 async def _get_catalog_context(db: AsyncSession, company_id: uuid.UUID) -> str:
     """Load product catalog as text for inline RAG."""
-    from sqlalchemy import select
-    from app.models.product import Product
-
     result = await db.execute(
         select(Product)
         .where(Product.company_id == company_id, Product.is_active.is_(True))
@@ -155,26 +172,6 @@ async def _get_catalog_context(db: AsyncSession, company_id: uuid.UUID) -> str:
             lines.append(f"  Incluye: {', '.join(p.features)}")
         if p.price_notes:
             lines.append(f"  Nota: {p.price_notes}")
-    return "\n".join(lines)
-
-
-async def _get_kb_context(db: AsyncSession, company_id: uuid.UUID) -> str:
-    """Load knowledge base items as text for inline RAG."""
-    from sqlalchemy import select
-    from app.models.knowledge import KnowledgeItem
-
-    result = await db.execute(
-        select(KnowledgeItem)
-        .where(KnowledgeItem.company_id == company_id, KnowledgeItem.is_active.is_(True))
-        .limit(10)
-    )
-    items = result.scalars().all()
-    if not items:
-        return ""
-
-    lines = []
-    for item in items:
-        lines.append(f"- {item.title or 'Info'}: {item.content[:300]}")
     return "\n".join(lines)
 
 
@@ -249,12 +246,6 @@ async def _generate_anthropic(
             "tools_used": tools_used,
         }
 
-    except Exception:
+    except Exception as e:
         logger.exception("Claude API error")
-        return {
-            "text": "Disculpa, estoy teniendo un problema tecnico. Un miembro del equipo te va a responder pronto.",
-            "model": "fallback",
-            "tokens_in": 0,
-            "tokens_out": 0,
-            "tools_used": [],
-        }
+        return _format_error_result(e)

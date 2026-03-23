@@ -2,18 +2,23 @@
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings as app_settings
 from app.models.company import Company
 from app.models.conversation import Conversation
 from app.models.lead import Lead
 from app.models.message import Message
 from app.services.ai_agent import generate_response
+from app.services.follow_up_engine import cancel_followups_for_lead
 from app.services.lead_scorer import extract_signals_from_message, update_score
+from app.services.response_validator import validate_response
+from app.services.sse import notify
 from app.services.whatsapp_client import send_text_message
+from app.tasks.notifications import alert_hot_lead
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +37,7 @@ async def handle_inbound_message(
 ) -> None:
     """Process an inbound message from any channel."""
 
-    # 1. Find company by phone_number_id
+    # 1. Find company
     company = await _find_company(db, channel, phone_number_id)
     if not company:
         logger.warning("No company found for phone_number_id=%s", phone_number_id)
@@ -53,45 +58,21 @@ async def handle_inbound_message(
         msg_type=msg_type,
         content=content,
         channel_msg_id=channel_msg_id,
-        channel_ts=datetime.fromtimestamp(int(timestamp), tz=timezone.utc) if timestamp else None,
+        channel_ts=datetime.fromtimestamp(int(timestamp), tz=UTC) if timestamp else None,
     )
     db.add(inbound_msg)
-
-    # Update lead last_message_at
-    lead.last_message_at = datetime.now(timezone.utc)
+    lead.last_message_at = datetime.now(UTC)
     await db.flush()
 
-    # 4b. Cancel pending follow-ups (lead responded)
-    try:
-        from app.services.follow_up_engine import cancel_followups_for_lead
-        await cancel_followups_for_lead(db, lead.id)
-    except Exception:
-        pass
+    # 5. Score lead and handle follow-ups
+    await _score_and_alert(db, lead, company, content)
 
-    # 4c. Score the lead based on message content
-    if content:
-        signals = extract_signals_from_message(content)
-        if signals:
-            scoring_rules = company.scoring_rules if hasattr(company, "scoring_rules") else None
-            new_score = await update_score(db, lead, signals, scoring_rules)
-
-            # 4d. Alert seller if lead is hot (score >= 76)
-            if new_score >= 76:
-                try:
-                    from app.tasks.notifications import alert_hot_lead
-                    alert_hot_lead.delay(str(lead.id), str(company.id), new_score, lead.name)
-                except Exception:
-                    logger.warning("Failed to queue hot lead alert (Celery not running?)")
-
-    # 5. Generate AI response if enabled
+    # 6. Generate AI response if enabled
     if not conversation.ai_enabled:
         logger.info("AI disabled for conversation %s, skipping", conversation.id)
         return
 
-    # Build conversation history from recent messages
     history = await _build_conversation_history(db, conversation.id)
-
-    # 6. Call AI agent
     ai_result = await generate_response(
         company=company,
         lead=lead,
@@ -104,37 +85,10 @@ async def handle_inbound_message(
     if not response_text:
         return
 
-    # 6b. VALIDATE response before sending (price check, forbidden patterns, etc.)
-    from app.services.response_validator import validate_response
-    validation = await validate_response(db, company.id, response_text)
-
-    if validation["should_escalate"]:
-        # Critical issue — don't send AI response, escalate to human
-        logger.warning("AI response blocked for lead %s: %s", lead.id, validation["issues"])
-        response_text = (
-            "Voy a consultar esto con el equipo para darte una respuesta precisa. "
-            "Un vendedor te va a responder pronto."
-        )
-        # Pause AI on this conversation
-        conversation.ai_enabled = False
-        conversation.status = "handed_off"
-        await db.flush()
-    elif validation["corrected_response"] != response_text:
-        # Response was corrected (e.g., wrong price fixed)
-        logger.info("AI response corrected for lead %s: %s", lead.id,
-                    [i for i in validation["issues"] if i["type"] == "price_corrected"])
-        response_text = validation["corrected_response"]
-
-    # 7. Send response via channel (skip in development if no real token)
-    if channel == "whatsapp" and phone_number_id:
-        from app.config import settings as _settings
-        if _settings.whatsapp_access_token:
-            try:
-                await send_text_message(phone_number_id, sender_id, response_text)
-            except Exception:
-                logger.warning("Failed to send WhatsApp message (dev mode?)")
-        else:
-            logger.info("Skipping WhatsApp send (no access token configured)")
+    # 7. Validate and send response
+    response_text = await _validate_and_send(
+        db, company, conversation, lead, response_text, channel, phone_number_id, sender_id,
+    )
 
     # 8. Save outbound message
     outbound_msg = Message(
@@ -149,9 +103,7 @@ async def handle_inbound_message(
         ai_tools_used=ai_result.get("tools_used"),
     )
     db.add(outbound_msg)
-
-    # Update lead response time
-    lead.last_response_at = datetime.now(timezone.utc)
+    lead.last_response_at = datetime.now(UTC)
     await db.flush()
 
     logger.info(
@@ -163,32 +115,114 @@ async def handle_inbound_message(
     )
 
     # 9. Notify SSE listeners
+    _notify_sse(str(company.id), str(conversation.id), lead.name, content, response_text)
+
+
+async def _score_and_alert(
+    db: AsyncSession,
+    lead: Lead,
+    company: Company,
+    content: str,
+) -> None:
+    """Cancel pending follow-ups, score the lead, and alert if hot."""
     try:
-        from app.api.conversations import _notify
-        _notify(str(company.id), {
+        await cancel_followups_for_lead(db, lead.id)
+    except Exception:
+        logger.debug("Could not cancel follow-ups for lead %s", lead.id)
+
+    if not content:
+        return
+
+    signals = extract_signals_from_message(content)
+    if not signals:
+        return
+
+    scoring_rules = company.scoring_rules if hasattr(company, "scoring_rules") else None
+    new_score = await update_score(db, lead, signals, scoring_rules)
+
+    if new_score >= 76:
+        try:
+            alert_hot_lead.delay(str(lead.id), str(company.id), new_score, lead.name)
+        except Exception:
+            logger.warning("Failed to queue hot lead alert (Celery not running?)")
+
+
+async def _validate_and_send(
+    db: AsyncSession,
+    company: Company,
+    conversation: Conversation,
+    lead: Lead,
+    response_text: str,
+    channel: str,
+    phone_number_id: str | None,
+    sender_id: str,
+) -> str:
+    """Validate AI response and send via channel. Returns final response text."""
+    validation = await validate_response(db, company.id, response_text)
+
+    if validation["should_escalate"]:
+        logger.warning("AI response blocked for lead %s: %s", lead.id, validation["issues"])
+        response_text = (
+            "Voy a consultar esto con el equipo para darte una respuesta precisa. "
+            "Un vendedor te va a responder pronto."
+        )
+        conversation.ai_enabled = False
+        conversation.status = "handed_off"
+        await db.flush()
+    elif validation["corrected_response"] != response_text:
+        logger.info(
+            "AI response corrected for lead %s: %s",
+            lead.id,
+            [i for i in validation["issues"] if i["type"] == "price_corrected"],
+        )
+        response_text = validation["corrected_response"]
+
+    if channel == "whatsapp" and phone_number_id:
+        if app_settings.whatsapp_access_token:
+            try:
+                await send_text_message(phone_number_id, sender_id, response_text)
+            except Exception:
+                logger.warning("Failed to send WhatsApp message to %s", sender_id)
+        else:
+            logger.info("Skipping WhatsApp send (no access token configured)")
+
+    return response_text
+
+
+def _notify_sse(
+    company_id: str,
+    conversation_id: str,
+    lead_name: str | None,
+    inbound_content: str,
+    response_text: str,
+) -> None:
+    """Notify SSE listeners about new inbound + outbound messages."""
+    now = datetime.now(UTC).isoformat()
+    try:
+        notify(company_id, {
             "type": "new_message",
-            "conversation_id": str(conversation.id),
-            "lead_name": lead.name,
+            "conversation_id": conversation_id,
+            "lead_name": lead_name,
             "message": {
                 "direction": "inbound",
                 "sender_type": "lead",
-                "content": content[:100],
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "content": inbound_content[:100],
+                "created_at": now,
             },
         })
         if response_text:
-            _notify(str(company.id), {
+            notify(company_id, {
                 "type": "new_message",
-                "conversation_id": str(conversation.id),
+                "conversation_id": conversation_id,
                 "message": {
                     "direction": "outbound",
                     "sender_type": "ai",
                     "content": response_text[:100],
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": now,
                 },
             })
     except Exception:
-        pass  # SSE notification is best-effort
+        logger.debug("SSE notification failed (best-effort)")
 
 
 async def _find_company(

@@ -41,12 +41,9 @@ def extract_prices(text: str) -> list[float]:
     """Extract all monetary values from text."""
     prices = []
     for match in PRICE_REGEX.finditer(text):
-        # Get the matched group (one of 3 groups will match)
         raw = match.group(1) or match.group(2) or match.group(3)
         if raw:
-            # Normalize: remove thousands separators
             clean = raw.replace(".", "").replace(",", ".")
-            # If the last segment is 3 digits, it's a thousands separator not decimal
             parts = raw.split(".")
             if len(parts) > 1 and len(parts[-1]) == 3:
                 clean = raw.replace(".", "")
@@ -55,6 +52,109 @@ def extract_prices(text: str) -> list[float]:
             except ValueError:
                 pass
     return prices
+
+
+def _check_forbidden(ai_response: str) -> list[dict]:
+    """Check for forbidden patterns in the response."""
+    issues = []
+    for pattern in FORBIDDEN_PATTERNS:
+        if re.search(pattern, ai_response):
+            issues.append({
+                "type": "forbidden_pattern",
+                "severity": "warning",
+                "message": f"Respuesta contiene patron no permitido: {pattern}",
+            })
+    return issues
+
+
+def _check_escalation(ai_response: str) -> list[dict]:
+    """Check for escalation keywords that require human intervention."""
+    issues = []
+    text_lower = ai_response.lower()
+    for keyword in ESCALATION_KEYWORDS:
+        if keyword in text_lower:
+            issues.append({
+                "type": "escalation_needed",
+                "severity": "critical",
+                "message": f"Tema sensible detectado: '{keyword}' — escalar a humano",
+            })
+    return issues
+
+
+async def _check_prices(
+    db: AsyncSession,
+    company_id: uuid.UUID,
+    ai_response: str,
+    corrected_response: str,
+) -> tuple[list[dict], str]:
+    """Validate mentioned prices against the catalog. Returns (issues, corrected_response)."""
+    issues = []
+    mentioned_prices = extract_prices(ai_response)
+    if not mentioned_prices:
+        return issues, corrected_response
+
+    result = await db.execute(
+        select(Product.name, Product.price)
+        .where(Product.company_id == company_id, Product.is_active.is_(True))
+    )
+    catalog_prices = {str(int(float(p))): name for name, p in result.all() if p}
+
+    for price in mentioned_prices:
+        price_int = str(int(price))
+        if price_int in catalog_prices:
+            continue
+
+        close_match = _find_close_price(price, catalog_prices)
+        if close_match:
+            issues.append({
+                "type": "price_corrected",
+                "severity": "warning",
+                "message": (
+                    f"Precio ${price:,.0f} corregido a "
+                    f"${close_match[1]:,.0f} ({close_match[0]})"
+                ),
+                "original": price,
+                "corrected": close_match[1],
+            })
+            corrected_response = corrected_response.replace(
+                f"${price:,.0f}", f"${close_match[1]:,.0f}"
+            )
+        elif price > 100:
+            issues.append({
+                "type": "price_unverified",
+                "severity": "info",
+                "message": (
+                    f"Precio ${price:,.0f} mencionado no coincide "
+                    "con ningun producto del catalogo"
+                ),
+            })
+
+    return issues, corrected_response
+
+
+def _find_close_price(
+    price: float, catalog_prices: dict[str, str]
+) -> tuple[str, float] | None:
+    """Find a catalog price within 10% of the mentioned price."""
+    for cat_price_str, cat_name in catalog_prices.items():
+        cat_price = float(cat_price_str)
+        if cat_price > 0 and abs(price - cat_price) / cat_price < 0.10:
+            return (cat_name, cat_price)
+    return None
+
+
+def _check_length(ai_response: str) -> list[dict]:
+    """Check if response is too long for WhatsApp."""
+    if len(ai_response) > 1500:
+        return [{
+            "type": "response_too_long",
+            "severity": "info",
+            "message": (
+                f"Respuesta muy larga ({len(ai_response)} chars). "
+                "Optimo para WhatsApp: <1000 chars."
+            ),
+        }]
+    return []
 
 
 async def validate_response(
@@ -66,84 +166,20 @@ async def validate_response(
     issues = []
     corrected_response = ai_response
 
-    # 1. Check for forbidden patterns
-    for pattern in FORBIDDEN_PATTERNS:
-        if re.search(pattern, ai_response):
-            issues.append({
-                "type": "forbidden_pattern",
-                "severity": "warning",
-                "message": f"Respuesta contiene patron no permitido: {pattern}",
-            })
+    issues.extend(_check_forbidden(ai_response))
+    issues.extend(_check_escalation(ai_response))
 
-    # 2. Check for escalation keywords
-    text_lower = ai_response.lower()
-    for keyword in ESCALATION_KEYWORDS:
-        if keyword in text_lower:
-            issues.append({
-                "type": "escalation_needed",
-                "severity": "critical",
-                "message": f"Tema sensible detectado: '{keyword}' — escalar a humano",
-            })
+    price_issues, corrected_response = await _check_prices(
+        db, company_id, ai_response, corrected_response
+    )
+    issues.extend(price_issues)
+    issues.extend(_check_length(ai_response))
 
-    # 3. Validate prices against catalog
-    mentioned_prices = extract_prices(ai_response)
-    if mentioned_prices:
-        # Get all product prices for this company
-        result = await db.execute(
-            select(Product.name, Product.price)
-            .where(Product.company_id == company_id, Product.is_active.is_(True))
-        )
-        catalog_prices = {str(int(float(p))): name for name, p in result.all() if p}
-
-        for price in mentioned_prices:
-            price_int = str(int(price))
-            if price_int not in catalog_prices:
-                # Price not in catalog — could be a hallucination
-                # Check if it's close to any catalog price (within 10%)
-                close_match = None
-                for cat_price_str, cat_name in catalog_prices.items():
-                    cat_price = float(cat_price_str)
-                    if cat_price > 0 and abs(price - cat_price) / cat_price < 0.10:
-                        close_match = (cat_name, cat_price)
-                        break
-
-                if close_match:
-                    # Close but not exact — correct it
-                    issues.append({
-                        "type": "price_corrected",
-                        "severity": "warning",
-                        "message": f"Precio ${price:,.0f} corregido a ${close_match[1]:,.0f} ({close_match[0]})",
-                        "original": price,
-                        "corrected": close_match[1],
-                    })
-                    corrected_response = corrected_response.replace(
-                        f"${price:,.0f}", f"${close_match[1]:,.0f}"
-                    )
-                else:
-                    # Price not in catalog at all — might be a calculation or hallucination
-                    # Only flag if it looks like a product price (> $100)
-                    if price > 100:
-                        issues.append({
-                            "type": "price_unverified",
-                            "severity": "info",
-                            "message": f"Precio ${price:,.0f} mencionado no coincide con ningun producto del catalogo",
-                        })
-
-    # 4. Check response length (WhatsApp optimal)
-    if len(ai_response) > 1500:
-        issues.append({
-            "type": "response_too_long",
-            "severity": "info",
-            "message": f"Respuesta muy larga ({len(ai_response)} chars). Optimo para WhatsApp: <1000 chars.",
-        })
-
-    # Determine overall validation result
     critical = [i for i in issues if i["severity"] == "critical"]
-    should_escalate = len(critical) > 0
 
     return {
-        "valid": not should_escalate,
-        "should_escalate": should_escalate,
+        "valid": len(critical) == 0,
+        "should_escalate": len(critical) > 0,
         "issues": issues,
         "original_response": ai_response,
         "corrected_response": corrected_response,

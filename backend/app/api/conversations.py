@@ -1,7 +1,8 @@
 import asyncio
 import json
+import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -10,23 +11,22 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.deps import get_current_company_id
 from app.database import get_db
+from app.models.company import Company
 from app.models.conversation import Conversation
 from app.models.lead import Lead
 from app.models.message import Message
-from app.schemas.conversation import ConversationResponse, ConversationWithMessages, MessageResponse
-from app.api.deps import get_current_company_id
+from app.schemas.conversation import ConversationWithMessages, MessageResponse
+from app.services.sse import notify, subscribe, unsubscribe
+from app.services.whatsapp_client import send_text_message
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Simple in-memory pub/sub for SSE (replace with Redis pub/sub in production)
-_listeners: dict[str, list[asyncio.Queue]] = {}
 
-
-def _notify(company_id: str, event: dict):
-    """Notify all SSE listeners for a company."""
-    for queue in _listeners.get(company_id, []):
-        queue.put_nowait(event)
+# Keep _notify as alias for backward compatibility (message_handler imports it)
+_notify = notify
 
 
 class SendMessageRequest(BaseModel):
@@ -45,7 +45,10 @@ async def list_conversations(
 ):
     """List conversations with lead info."""
     query = (
-        select(Conversation, Lead.name, Lead.whatsapp_phone, Lead.instagram_username, Lead.score, Lead.priority)
+        select(
+            Conversation, Lead.name, Lead.whatsapp_phone,
+            Lead.instagram_username, Lead.score, Lead.priority,
+        )
         .join(Lead, Conversation.lead_id == Lead.id)
         .where(Conversation.company_id == company_id)
     )
@@ -129,7 +132,6 @@ async def send_human_message(
     db: AsyncSession = Depends(get_db),
 ):
     """Send a message as a human agent in a conversation."""
-    # Verify conversation
     result = await db.execute(
         select(Conversation)
         .where(Conversation.id == conversation_id, Conversation.company_id == company_id)
@@ -138,7 +140,6 @@ async def send_human_message(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversacion no encontrada")
 
-    # Save message
     msg = Message(
         conversation_id=conversation.id,
         direction="outbound",
@@ -148,38 +149,19 @@ async def send_human_message(
     )
     db.add(msg)
 
-    # Update lead last_response_at
     lead_result = await db.execute(select(Lead).where(Lead.id == conversation.lead_id))
     lead = lead_result.scalar_one_or_none()
     if lead:
-        lead.last_response_at = datetime.now(timezone.utc)
+        lead.last_response_at = datetime.now(UTC)
 
-    # Update conversation timestamp
-    conversation.updated_at = datetime.now(timezone.utc)
+    conversation.updated_at = datetime.now(UTC)
 
     await db.flush()
     await db.refresh(msg)
 
-    # Send via WhatsApp if configured
-    if conversation.channel == "whatsapp" and lead and lead.whatsapp_id:
-        from app.config import settings
-        from app.models.company import Company
+    await _send_via_whatsapp(conversation, lead, company_id, data.content, db)
 
-        company_result = await db.execute(select(Company).where(Company.id == company_id))
-        company = company_result.scalar_one_or_none()
-        if company and company.whatsapp_token:
-            try:
-                from app.services.whatsapp_client import send_text_message
-                await send_text_message(
-                    company.phone_number_id or "",
-                    lead.whatsapp_id,
-                    data.content,
-                )
-            except Exception:
-                pass  # Log but don't fail the dashboard send
-
-    # Notify SSE listeners
-    _notify(str(company_id), {
+    notify(str(company_id), {
         "type": "new_message",
         "conversation_id": str(conversation_id),
         "message": {
@@ -199,15 +181,37 @@ async def send_human_message(
     }
 
 
+async def _send_via_whatsapp(
+    conversation: Conversation,
+    lead: Lead | None,
+    company_id: uuid.UUID,
+    content: str,
+    db: AsyncSession,
+) -> None:
+    """Send message via WhatsApp if the conversation channel is whatsapp."""
+    if conversation.channel != "whatsapp" or not lead or not lead.whatsapp_id:
+        return
+
+    company_result = await db.execute(select(Company).where(Company.id == company_id))
+    company = company_result.scalar_one_or_none()
+    if not company or not company.whatsapp_token:
+        return
+
+    try:
+        await send_text_message(
+            company.phone_number_id or "",
+            lead.whatsapp_id,
+            content,
+        )
+    except Exception:
+        logger.warning("Failed to send WhatsApp message for conversation %s", conversation.id)
+
+
 @router.get("/{company_id}/events/stream")
 async def sse_stream(company_id: uuid.UUID, request: Request):
     """Server-Sent Events stream for real-time updates."""
-    queue: asyncio.Queue = asyncio.Queue()
     key = str(company_id)
-
-    if key not in _listeners:
-        _listeners[key] = []
-    _listeners[key].append(queue)
+    queue = subscribe(key)
 
     async def event_generator():
         try:
@@ -218,11 +222,9 @@ async def sse_stream(company_id: uuid.UUID, request: Request):
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=30.0)
                     yield f"data: {json.dumps(event)}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield f"data: {json.dumps({'type': 'ping'})}\n\n"
         finally:
-            _listeners[key].remove(queue)
-            if not _listeners[key]:
-                del _listeners[key]
+            unsubscribe(key, queue)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
