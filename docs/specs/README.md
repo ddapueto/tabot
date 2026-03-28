@@ -34,9 +34,9 @@ Claude, leé docs/specs/spec-01/ y ejecutá las tasks
 | 08 | Landing page | P2 | +0.5 pts | 07 | ⏳ ready |
 | 09 | WhatsApp real | P0 | +1.0 pts | 07 | ⏳ ready |
 | 10 | Monitoring | P2 | +0.5 pts | 06, 07 | ⏳ ready |
-| 11 | **Refactoring backend** | **P0** | riesgo 100→30 | — | ⏳ ready |
-| 12 | **Doc drift cleanup** | **P1** | 15 drift→0 | — | ⏳ ready |
-| 13 | **Desacoplamiento** | **P2** | smells 25→15 | spec-11 | ⏳ ready |
+| 11 | **Refactoring backend** | **P0** | riesgo 100→30 | — | ✅ done |
+| 12 | **Doc drift cleanup** | **P1** | 15 drift→0 | — | ✅ done |
+| 13 | **Desacoplamiento** | **P2** | smells 25→15 | spec-11 | ✅ done |
 
 ## Dependencias
 
